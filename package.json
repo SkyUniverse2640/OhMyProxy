@@ -1,0 +1,17 @@
+{
+  "name": "postman-claude-proxy",
+  "version": "1.0.0",
+  "description": "Proxy: Claude Code → Postman Gateway AI (localhost:8020)",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --watch index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
