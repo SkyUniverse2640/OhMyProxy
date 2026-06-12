@@ -84,12 +84,6 @@ jobs:
             bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
             bun run index.ts
             ```
-          files: |
-            src/**/*
-            package.json
-            tailwind.config.ts
-            tsconfig.json
-            bun.lock
           draft: false
           prerelease: false
           generate_release_notes: true
