@@ -3,6 +3,7 @@
     "port": 8020,
     "host": "127.0.0.1"
   },
+  "management_key": "ganti-dengan-key-rahasia",
   "secret_keys": [
     "Your Secret Key",
     "Your Secret Key2"
