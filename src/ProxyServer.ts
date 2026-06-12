@@ -1,4 +1,6 @@
 import type { Settings, AccessToken, AnthropicRequest, PostmanToolResponse, PostmanStreamResult } from './types';
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Config } from './Config';
 import { Logger } from './Logger';
 import { TokenManager } from './TokenManager';
@@ -76,11 +78,36 @@ export class ProxyServer {
         const oauthResponse = await this.oauth.handle(req);
         if (oauthResponse) return oauthResponse;
 
+        // Dashboard SPA fallback (non-API GET requests → index.html)
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
+            return this.serveDashboard();
+        }
+
         if (path !== '/v1/messages' || method !== 'POST') {
             return this.json({ error: `Route tidak ditemukan: ${method} ${path}` }, 404);
         }
 
         return this.handleMessages(req, reqId);
+    }
+
+    // ─── Dashboard Serving ──────────────────────────────────────────────
+
+    private serveDashboard(): Response {
+        const html = readFileSync(join(import.meta.dir, "..", "src", "dashboard", "index.html"), "utf-8");
+        return new Response(html, {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+    }
+
+    private serveStatic(relPath: string, contentType: string): Response {
+        try {
+            const file = Bun.file(join(import.meta.dir, "..", relPath));
+            return new Response(file, {
+                headers: { "Content-Type": contentType },
+            });
+        } catch {
+            return new Response("Not found", { status: 404 });
+        }
     }
 
     // ─── Route Handlers ───────────────────────────────────────────────────
