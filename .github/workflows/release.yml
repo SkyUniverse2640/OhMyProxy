@@ -210,6 +210,18 @@ jobs:
       - name: List artifacts
         run: find artifacts/ -type f
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          for dir in */; do
+            for file in "$dir"*; do
+              [ -f "$file" ] && sha256sum "$file" >> checksums.txt
+            done
+          done
+          # Shorten paths: artifacts/linux-x64/ohmyproxy-linux-x64.tar.gz → ohmyproxy-linux-x64.tar.gz
+          sed -i 's|artifacts/[^/]*/||g' checksums.txt
+          cat checksums.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -229,6 +241,7 @@ jobs:
             | Windows x64 | `ohmyproxy-windows-x64.zip` |
             | macOS x64 | `ohmyproxy-macos-x64.tar.gz` |
             | macOS ARM64 | `ohmyproxy-macos-arm64.tar.gz` |
+            | **Checksums** | `checksums.txt` |
 
             ## Quick Start
             1. Download for your platform
@@ -250,6 +263,7 @@ jobs:
             artifacts/windows-x64/ohmyproxy-windows-x64.zip
             artifacts/macos-x64/ohmyproxy-macos-x64.tar.gz
             artifacts/macos-arm64/ohmyproxy-macos-arm64.tar.gz
+            artifacts/checksums.txt
           draft: false
           prerelease: false
           generate_release_notes: true
