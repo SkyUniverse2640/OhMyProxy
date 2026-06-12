@@ -84,9 +84,8 @@ class ApiClient {
     );
   }
 
-  // OAuth
-  async getOAuthLoginUrl(): Promise<{ url: string; state: string }> {
-    return this.request("/oauth/postman/login", { method: "POST" });
+  async getQuota() {
+    return this.request<import("./types").QuotaResponse>("/management/quota");
   }
 }
 

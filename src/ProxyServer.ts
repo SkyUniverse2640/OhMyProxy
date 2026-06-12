@@ -1,7 +1,6 @@
 import type { Settings, AccessToken, AnthropicRequest, PostmanToolResponse, PostmanStreamResult } from './types';
 import { readFileSync } from "fs";
 import { join } from "path";
-import open from "open";
 import { Config } from './Config';
 import { Logger } from './Logger';
 import { TokenManager } from './TokenManager';
@@ -9,7 +8,6 @@ import { ToolExecutor } from './ToolExecutor';
 import { PayloadBuilder } from './PayloadBuilder';
 import { StreamReader } from './StreamReader';
 import { ManagementHandler } from './ManagementHandler';
-import { OAuthHandler } from './OAuthHandler';
 
 const CORS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
@@ -26,7 +24,6 @@ export class ProxyServer {
     private readonly payload: PayloadBuilder;
     private readonly streamReader: StreamReader;
     private readonly management: ManagementHandler;
-    private readonly oauth: OAuthHandler;
 
     constructor(private readonly config: Config) {
         this.settings = config.loadSettings();
@@ -35,7 +32,6 @@ export class ProxyServer {
         this.payload = new PayloadBuilder(this.settings);
         this.streamReader = new StreamReader();
         this.management = new ManagementHandler(config, this.tokens);
-        this.oauth = new OAuthHandler(config, this.tokens);
     }
 
     start(): void {
@@ -44,16 +40,13 @@ export class ProxyServer {
         const activeCount = this.tokens.getActive().length;
 
         console.log(`
-      SkyUniverse ProxyAPI - https://${host}:${port}
+      SkyUniverse ProxyAPI - http://${host}:${port}
       Model AI      : ${model.padEnd(44)}
       Access Token  :  ${String(activeCount).padEnd(44)}
+      Dashboard     :  http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/
       ===============================================
       Go To .claude/settings.json to Setup the Proxy
 `);
-
-        // Auto-open dashboard in browser
-        const dashboardUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/`;
-        open(dashboardUrl).catch(() => {});
 
         Bun.serve({ port, hostname: host, fetch: (req) => this.handle(req), idleTimeout: 255 });
     }
@@ -78,10 +71,6 @@ export class ProxyServer {
         // Management API
         const mgmtResponse = await this.management.handle(req);
         if (mgmtResponse) return mgmtResponse;
-
-        // OAuth endpoints (public, no management key required)
-        const oauthResponse = await this.oauth.handle(req);
-        if (oauthResponse) return oauthResponse;
 
         // Dashboard static files (CSS, JS, TSX, TS)
         if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
@@ -392,6 +381,7 @@ export class ProxyServer {
             this.logger.log('error', `[${reqId}] ❌ Postman ${resp.status}: ${errText.slice(0, 200)}`);
 
             if (resp.status === 429 && retryCount < MAX_RETRIES) {
+                this.tokens.recordRateLimit(token.id);
                 const retryAfter = resp.headers.get('Retry-After');
                 const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : 2 ** retryCount * 1000;
                 this.logger.log('warn', `[${reqId}] ⏳ Rate limited. Retry ${retryCount + 1}/${MAX_RETRIES} in ${waitMs}ms`);
@@ -418,6 +408,7 @@ export class ProxyServer {
             };
         }
 
+        this.tokens.recordRequest(token.id);
         return this.streamReader.read(resp.body!);
     }
 

@@ -65,6 +65,23 @@ export interface LogsResponse {
   total: number;
 }
 
+export interface QuotaTokenStats {
+  id: number;
+  label: string;
+  requestCount: number;
+  rateLimitCount: number;
+  lastUsed: number | null;
+  active: boolean;
+}
+
+export interface QuotaResponse {
+  tokens: QuotaTokenStats[];
+  total: {
+    requests: number;
+    rateLimits: number;
+  };
+}
+
 export interface ApiError {
   error: string;
 }

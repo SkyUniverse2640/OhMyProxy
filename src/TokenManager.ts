@@ -1,9 +1,19 @@
 import type { AccessToken } from "./types";
 import type { Config } from "./Config";
 
+export interface QuotaStats {
+  id: number;
+  label: string;
+  requestCount: number;
+  rateLimitCount: number;
+  lastUsed: number | null;
+  active: boolean;
+}
+
 export class TokenManager {
   private idx = 0;
   private readonly config: Config;
+  private readonly stats: Map<number, { requestCount: number; rateLimitCount: number; lastUsed: number | null }> = new Map();
 
   constructor(config: Config) {
     this.config = config;
@@ -42,6 +52,7 @@ export class TokenManager {
     const filtered = tokens.filter(t => t.id !== id);
     if (filtered.length === tokens.length) return false;
     this.config.saveTokens(filtered);
+    this.stats.delete(id);
     return true;
   }
 
@@ -52,5 +63,42 @@ export class TokenManager {
     token.active = !token.active;
     this.config.saveTokens(tokens);
     return token;
+  }
+
+  // ─── Quota Tracking ─────────────────────────────────────────────────
+
+  recordRequest(tokenId: number): void {
+    let s = this.stats.get(tokenId);
+    if (!s) {
+      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null };
+      this.stats.set(tokenId, s);
+    }
+    s.requestCount++;
+    s.lastUsed = Date.now();
+  }
+
+  recordRateLimit(tokenId: number): void {
+    let s = this.stats.get(tokenId);
+    if (!s) {
+      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null };
+      this.stats.set(tokenId, s);
+    }
+    s.rateLimitCount++;
+    s.lastUsed = Date.now();
+  }
+
+  getQuota(): QuotaStats[] {
+    const tokens = this.all();
+    return tokens.map(t => {
+      const s = this.stats.get(t.id);
+      return {
+        id: t.id,
+        label: t.label,
+        requestCount: s?.requestCount ?? 0,
+        rateLimitCount: s?.rateLimitCount ?? 0,
+        lastUsed: s?.lastUsed ?? null,
+        active: t.active,
+      };
+    });
   }
 }
