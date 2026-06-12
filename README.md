@@ -17,6 +17,9 @@ Postman Claude Proxy -- use Claude Code through Postman Gateway AI.
 # Install dependencies
 bun install
 
+# Interactive setup (configures settings.json)
+bun run setup
+
 # Build dashboard and CSS
 bun run build:dashboard
 bun run build:css
@@ -29,7 +32,8 @@ Or simply:
 
 ```bash
 bun install
-bun run start   # prestart builds dashboard + CSS automatically
+bun run setup    # first time only
+bun run start    # prestart builds dashboard + CSS automatically
 ```
 
 ## Configuration
@@ -49,8 +53,8 @@ Edit `settings.json` in the project root:
   "postman": {
     "base_url": "https://gateway.postman.com",
     "model": "CLAUDE_OPUS_48_BEDROCK",
-    "user_id": "54160029",
-    "team_id": "15274029",
+    "user_id": "YOUR_USER_ID",
+    "team_id": "YOUR_TEAM_ID",
     "workspace_id": "your-workspace-id"
   },
   "logging": {
@@ -139,8 +143,10 @@ Dashboard (Browser)
 
 | Script | Description |
 |--------|-------------|
+| `bun run setup` | Interactive first-time configuration wizard |
 | `bun run start` | Start proxy (builds dashboard + CSS first) |
 | `bun run dev` | Start proxy with hot reload |
+| `bun run test` | Run test suite |
 | `bun run build:css` | Build Tailwind CSS |
 | `bun run build:css:min` | Build minified Tailwind CSS |
 | `bun run build:dashboard` | Bundle dashboard SPA (minified, 0.56MB) |
