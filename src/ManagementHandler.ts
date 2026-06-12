@@ -11,7 +11,7 @@ const CORS: Record<string, string> = {
 };
 
 export class ManagementHandler {
-  private readonly settings: Settings;
+  private settings: Settings;
 
   constructor(
     private readonly config: Config,
@@ -110,6 +110,7 @@ export class ManagementHandler {
     // Persist
     const settingsPath = join(this.config.getDir(), "settings.json");
     writeFileSync(settingsPath, JSON.stringify(current, null, 2));
+    this.settings = current;
 
     return this.json({ message: "Settings updated", updated: Object.keys(body).filter(k => ALLOWED_FIELDS.includes(k as any)) });
   }
