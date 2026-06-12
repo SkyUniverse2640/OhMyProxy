@@ -3,6 +3,7 @@ node_modules
 .claude
 .next/
 package-lock.json
+.env
 settings.json
 list_access_token.json
 src/dashboard/dist/

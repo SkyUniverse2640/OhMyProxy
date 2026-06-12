@@ -52,6 +52,9 @@ export class Config {
       console.log("[config] Migrated legacy credentials to api_keys list");
     }
 
+    // Apply .env overrides (higher priority than settings.json)
+    this.applyEnvOverrides(this._settingsCache);
+
     // Warn about default credentials on every load
     const s = this._settingsCache;
     const hasDefaultKey = s.api_keys.some(k => k === "change-me");
@@ -71,6 +74,49 @@ export class Config {
 
   invalidateSettings(): void {
     this._settingsCache = null;
+  }
+
+  // ─── Env Overrides ───────────────────────────────────────────────────────
+
+  private applyEnvOverrides(s: Settings): void {
+    const env = process.env;
+
+    // Proxy
+    if (env.PROXY_HOST) s.proxy.host = env.PROXY_HOST;
+    if (env.PROXY_PORT) {
+      const port = parseInt(env.PROXY_PORT, 10);
+      if (!isNaN(port) && port > 0 && port <= 65535) s.proxy.port = port;
+    }
+
+    // API Keys
+    if (env.API_KEYS) {
+      s.api_keys = env.API_KEYS.split(",").map(k => k.trim()).filter(Boolean);
+    }
+
+    // Postman
+    const pm = s.postman;
+    if (env.POSTMAN_BASE_URL)          pm.base_url = env.POSTMAN_BASE_URL;
+    if (env.POSTMAN_APP_VERSION)       pm.app_version = env.POSTMAN_APP_VERSION;
+    if (env.POSTMAN_PLATFORM)          pm.platform = env.POSTMAN_PLATFORM;
+    if (env.POSTMAN_MODEL)             pm.model = env.POSTMAN_MODEL;
+    if (env.POSTMAN_USER_ID)           pm.user_id = env.POSTMAN_USER_ID;
+    if (env.POSTMAN_TEAM_ID)           pm.team_id = env.POSTMAN_TEAM_ID;
+    if (env.POSTMAN_WORKSPACE_ID)      pm.workspace_id = env.POSTMAN_WORKSPACE_ID;
+    if (env.POSTMAN_WORKSPACE_NAME)    pm.workspace_name = env.POSTMAN_WORKSPACE_NAME;
+    if (env.POSTMAN_FILE_VIEWER_PATH)  pm.file_viewer_path = env.POSTMAN_FILE_VIEWER_PATH;
+
+    // Postman UI Build
+    const ui = pm.ui_build;
+    if (env.POSTMAN_UI_BUILD_DATE)       ui.date = env.POSTMAN_UI_BUILD_DATE;
+    if (env.POSTMAN_UI_BUILD_TIME)       ui.time = env.POSTMAN_UI_BUILD_TIME;
+    if (env.POSTMAN_UI_BUILD_TOOLS_HASH) ui.tools_hash = env.POSTMAN_UI_BUILD_TOOLS_HASH;
+    if (env.POSTMAN_UI_BUILD_KB_HASH)    ui.kb_hash = env.POSTMAN_UI_BUILD_KB_HASH;
+
+    // Logging
+    if (env.LOG_ENABLED !== undefined) {
+      s.logging.enabled = env.LOG_ENABLED === "true";
+    }
+    if (env.LOG_LEVEL) s.logging.level = env.LOG_LEVEL;
   }
 
   loadTokens(): AccessToken[] {
