@@ -12,7 +12,8 @@
     "build:dashboard": "bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist --target=browser --minify",
     "prestart": "bun run build:dashboard && bun run build:css",
     "predev": "bun run build:dashboard && bun run build:css",
-    "test": "bun test"
+    "test": "bun test",
+    "setup": "bun run setup.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",
