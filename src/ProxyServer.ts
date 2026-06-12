@@ -78,9 +78,15 @@ export class ProxyServer {
         const oauthResponse = await this.oauth.handle(req);
         if (oauthResponse) return oauthResponse;
 
-        // Dashboard static files
-        if (path === "/output.css") {
-            return this.serveStatic("src/dashboard/output.css", "text/css");
+        // Dashboard static files (CSS, JS, TSX, TS)
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
+            if (path === "/output.css") {
+                return this.serveStatic("src/dashboard/output.css", "text/css");
+            }
+            const ext = path.split(".").pop() || "";
+            if (["tsx", "ts", "js", "jsx", "css", "svg", "png", "ico"].includes(ext)) {
+                return this.serveDashboardFile(path);
+            }
         }
 
         // Dashboard SPA fallback (non-API GET requests → index.html)
@@ -113,6 +119,52 @@ export class ProxyServer {
         } catch {
             return new Response("Not found", { status: 404 });
         }
+    }
+
+    private serveDashboardFile(path: string): Response {
+        const relPath = join(import.meta.dir, "..", "src", "dashboard", path.replace(/^\//, ""));
+        const file = Bun.file(relPath);
+
+        if (!file.size) {
+            return new Response("Not found", { status: 404 });
+        }
+
+        const ext = path.split(".").pop() || "";
+        const mimeTypes: Record<string, string> = {
+            tsx: "text/javascript",
+            ts: "text/javascript",
+            js: "text/javascript",
+            jsx: "text/javascript",
+            css: "text/css",
+            svg: "image/svg+xml",
+            png: "image/png",
+            ico: "image/x-icon",
+        };
+
+        const contentType = mimeTypes[ext] || "application/octet-stream";
+
+        // Transpile TSX/TS to JS for browser consumption
+        if (ext === "tsx" || ext === "ts" || ext === "jsx") {
+            try {
+                const source = file.text();
+                // Use Bun's built-in transpiler to convert TSX → JS
+                // Bun.Transpiler is available globally in Bun runtime
+                const transpiled = Bun.Transpiler.transformSync(source, {
+                    loader: ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : "ts",
+                    target: "browser",
+                });
+                return new Response(transpiled, {
+                    headers: { "Content-Type": "text/javascript; charset=utf-8" },
+                });
+            } catch {
+                // Fallback: serve raw (browser will likely fail parsing, but at least shows the error)
+                return new Response(file, {
+                    headers: { "Content-Type": "text/javascript; charset=utf-8" },
+                });
+            }
+        }
+
+        return new Response(file, { headers: { "Content-Type": contentType } });
     }
 
     // ─── Route Handlers ───────────────────────────────────────────────────
