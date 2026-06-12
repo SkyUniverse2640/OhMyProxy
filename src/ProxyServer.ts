@@ -126,8 +126,8 @@ export class ProxyServer {
     private serveStatic(relPath: string, contentType: string): Response {
         try {
             const fullPath = join(import.meta.dir, "..", relPath);
-            const content = readFileSync(fullPath);
-            return new Response(new Uint8Array(content).buffer, {
+            const content = readFileSync(fullPath, "utf-8");
+            return new Response(content, {
                 headers: {
                     "Content-Type": `${contentType}; charset=utf-8`,
                     "Cache-Control": "no-cache, no-store, must-revalidate",
