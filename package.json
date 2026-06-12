@@ -1,6 +1,6 @@
 {
   "name": "postman-claude-proxy",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Proxy: Claude Code → Postman Gateway AI (localhost:8020)",
   "module": "index.ts",
   "type": "module",
