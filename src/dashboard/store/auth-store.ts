@@ -28,7 +28,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
       set({ isAuthenticated: false });
       return false;
-    } catch {
+    } catch (e: any) {
+      console.error("Login error:", e.message || e);
       set({ isAuthenticated: false });
       return false;
     }
