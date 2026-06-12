@@ -63,7 +63,7 @@ export class ProxyServer {
 
         if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-        if (path === '/' || path === '/health') return this.handleHealth();
+        if (path === '/health') return this.handleHealth();
         if (path === '/tokens') return this.handleTokens(req, method);
         if (path.match(/^\/tokens\/\d+$/)) return this.handleTokenById(path, method);
         if (path.match(/^\/tokens\/\d+\/toggle$/)) return this.handleTokenToggle(path, method);
