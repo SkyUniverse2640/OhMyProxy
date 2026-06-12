@@ -206,7 +206,7 @@ export class ProxyServer {
     // ─── Dashboard Serving ──────────────────────────────────────────────
 
     private serveDashboard(): Response {
-        const html = readFileSync(join(import.meta.dir, "..", "src", "dashboard", "index.html"), "utf-8");
+        const html = readFileSync(join(this.config.getDir(), "src", "dashboard", "index.html"), "utf-8");
         return new Response(html, {
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
@@ -219,7 +219,7 @@ export class ProxyServer {
 
     private serveStatic(relPath: string, contentType: string): Response {
         try {
-            const fullPath = join(import.meta.dir, "..", relPath);
+            const fullPath = join(this.config.getDir(), relPath);
             const content = readFileSync(fullPath, "utf-8");
             return new Response(content, {
                 headers: {
@@ -244,7 +244,7 @@ export class ProxyServer {
         if (cleanPath.includes("..") || cleanPath.includes("\0")) {
             return new Response("Forbidden", { status: 403 });
         }
-        const baseDir = resolve(import.meta.dir, "..", "src", "dashboard");
+        const baseDir = resolve(this.config.getDir(), "src", "dashboard");
         const resolved = resolve(baseDir, cleanPath);
         if (!resolved.startsWith(baseDir + "/") && resolved !== baseDir) {
             return new Response("Forbidden", { status: 403 });
