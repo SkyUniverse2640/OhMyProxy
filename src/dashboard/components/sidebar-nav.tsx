@@ -1,9 +1,12 @@
+import { useState, useEffect } from "react";
 import { cn } from "../lib/utils";
 import {
-  LayoutDashboard, Key, Settings, ScrollText, Shield, LogOut, X, BarChart3,
+  LayoutDashboard, Key, Settings, ScrollText, Shield, LogOut, X, BarChart3, ArrowUpCircle,
 } from "lucide-react";
 import { useAuthStore } from "../store/auth-store";
 import { Button } from "./ui/button";
+import { apiClient } from "../lib/api-client";
+import type { VersionInfo } from "../lib/types";
 
 const navItems = [
   { href: "#/management", label: "Overview", icon: LayoutDashboard },
@@ -20,6 +23,11 @@ interface SidebarNavProps {
 export function SidebarNav({ onClose }: SidebarNavProps) {
   const pathname = window.location.hash || "#/management";
   const logout = useAuthStore((s) => s.logout);
+  const [version, setVersion] = useState<VersionInfo | null>(null);
+
+  useEffect(() => {
+    apiClient.getVersion().then(setVersion).catch(() => {});
+  }, []);
 
   const handleNav = () => {
     if (onClose) onClose();
@@ -61,7 +69,27 @@ export function SidebarNav({ onClose }: SidebarNavProps) {
         })}
       </nav>
 
-      <div className="border-t p-3">
+      <div className="border-t space-y-1 p-3">
+        {/* Version / Update info */}
+        {version?.hasUpdate && (
+          <a
+            href={version.releaseUrl ?? "#"}
+            target="_blank"
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 transition-colors"
+            rel="noreferrer"
+          >
+            <ArrowUpCircle className="h-3.5 w-3.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium truncate">Update v{version.latest}</p>
+              <p className="text-[10px] text-amber-400/70">Current: v{version.current}</p>
+            </div>
+          </a>
+        )}
+        {version && !version.hasUpdate && (
+          <p className="px-3 py-1 text-[10px] text-muted-foreground text-center">
+            v{version.current} — up to date
+          </p>
+        )}
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 text-muted-foreground hover:text-accent-foreground"

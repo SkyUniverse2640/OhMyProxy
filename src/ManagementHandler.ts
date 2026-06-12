@@ -3,6 +3,7 @@ import { join } from "path";
 import type { Settings } from "./types";
 import type { Config } from "./Config";
 import type { TokenManager } from "./TokenManager";
+import type { VersionChecker } from "./VersionChecker";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +47,7 @@ export class ManagementHandler {
   constructor(
     private readonly config: Config,
     private readonly tokens: TokenManager,
+    private readonly versionChecker?: VersionChecker,
   ) {
     this.settings = config.loadSettings();
   }
@@ -89,6 +91,7 @@ export class ManagementHandler {
     }
 
     if (path === "/management/status" && method === "GET") return this.getStatus();
+    if (path === "/management/version" && method === "GET") return this.getVersion();
     if (path === "/management/quota" && method === "GET") return this.getQuota();
     if (path === "/management/settings" && method === "GET") return this.getSettings();
     if (path === "/management/settings" && method === "PATCH") return this.patchSettings(req);
@@ -107,6 +110,14 @@ export class ManagementHandler {
   }
 
   // ─── Handlers ──────────────────────────────────────────────────────────
+
+  private async getVersion(): Promise<Response> {
+    if (!this.versionChecker) {
+      return this.json({ current: "0.0.0", latest: null, hasUpdate: false });
+    }
+    const info = await this.versionChecker.check();
+    return this.json(info);
+  }
 
   private getQuota(): Response {
     return this.json({

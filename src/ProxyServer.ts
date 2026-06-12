@@ -8,6 +8,7 @@ import { ToolExecutor } from './ToolExecutor';
 import { PayloadBuilder } from './PayloadBuilder';
 import { StreamReader } from './StreamReader';
 import { ManagementHandler } from './ManagementHandler';
+import { VersionChecker } from './VersionChecker';
 
 const CORS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
@@ -60,6 +61,7 @@ export class ProxyServer {
     private readonly payload: PayloadBuilder;
     private readonly streamReader: StreamReader;
     private readonly management: ManagementHandler;
+    private readonly versionChecker = new VersionChecker("SkyUniverse2640/OhMyProxy");
     private readonly mgmtLimiter = new RateLimiter(30, 60_000, "Too many management requests. Please slow down.");
     private readonly messageLimiter = new RateLimiter(20, 60_000, "Too many proxy requests. Please slow down.");
 
@@ -69,7 +71,7 @@ export class ProxyServer {
         this.tokens = new TokenManager(config);
         this.payload = new PayloadBuilder(this.settings);
         this.streamReader = new StreamReader();
-        this.management = new ManagementHandler(config, this.tokens);
+        this.management = new ManagementHandler(config, this.tokens, this.versionChecker);
     }
 
     start(): void {
@@ -87,6 +89,19 @@ export class ProxyServer {
 `);
 
         Bun.serve({ port, hostname: host, fetch: (req) => this.handle(req), idleTimeout: 255 });
+
+        // Check for updates (async, non-blocking)
+        this.versionChecker.check().then(info => {
+            if (info.hasUpdate) {
+                console.log(`
+  ╔════════════════════════════════════════════════════════╗
+  ║  UPDATE AVAILABLE: v${info.latest?.padEnd(34) ?? ""} ║
+  ║  Current: v${info.current.padEnd(38)} ║
+  ║  ${(info.releaseUrl ?? "").padEnd(52)} ║
+  ╚════════════════════════════════════════════════════════╝
+`);
+            }
+        });
 
         // Fetch initial quota for all active tokens (async, non-blocking)
         this.fetchInitialQuota();

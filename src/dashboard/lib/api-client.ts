@@ -88,6 +88,10 @@ class ApiClient {
     return this.request<import("./types").QuotaResponse>("/management/quota");
   }
 
+  async getVersion() {
+    return this.request<import("./types").VersionInfo>("/management/version");
+  }
+
   async refreshQuota(tokenId?: number): Promise<{ refreshed: number; tokens: any[] }> {
     const path = tokenId != null
       ? `/management/quota/refresh/${tokenId}`

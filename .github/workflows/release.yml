@@ -1,0 +1,95 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.gitignore'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists
+        id: check
+        run: |
+          if gh release view "${{ steps.version.outputs.version }}" &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate changelog
+        if: steps.check.outputs.exists == 'false'
+        id: changelog
+        run: |
+          LAST_TAG=$(git tag --sort=-v:refname | head -1 || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            LOG=$(git log --oneline --no-merges)
+          else
+            LOG=$(git log --oneline --no-merges "${LAST_TAG}..HEAD")
+          fi
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          bun install
+          bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css 2>/dev/null || true
+          bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
+
+      - name: Create Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Changes
+            ```
+            ${{ steps.changelog.outputs.body }}
+            ```
+
+            ## Quick Start
+            ```bash
+            git clone https://github.com/SkyUniverse2640/OhMyProxy.git
+            cd OhMyProxy
+            git checkout ${{ steps.version.outputs.version }}
+            bun install
+            bun run build:css
+            bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
+            bun run index.ts
+            ```
+          files: |
+            src/**/*
+            package.json
+            tailwind.config.ts
+            tsconfig.json
+            bun.lock
+          draft: false
+          prerelease: false
+          generate_release_notes: true

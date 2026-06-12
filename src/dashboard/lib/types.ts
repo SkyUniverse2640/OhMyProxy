@@ -87,6 +87,16 @@ export interface QuotaResponse {
   };
 }
 
+export interface VersionInfo {
+  current: string;
+  latest: string | null;
+  hasUpdate: boolean;
+  releaseUrl: string | null;
+  releaseDate: string | null;
+  releaseNotes: string | null;
+  checkedAt: number;
+}
+
 export interface ApiError {
   error: string;
 }
