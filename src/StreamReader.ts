@@ -1,4 +1,4 @@
-import type { ToolCall, PostmanStreamResult } from "./types";
+import type { ToolCall, PostmanStreamResult, PostmanQuota } from "./types";
 
 export class StreamReader {
   async read(stream: ReadableStream<Uint8Array>): Promise<PostmanStreamResult> {
@@ -7,6 +7,7 @@ export class StreamReader {
     let buffer = "";
     let fullText = "";
     let conversationId = "";
+    let quota: PostmanQuota | undefined;
     const toolCallsMap = new Map<string, ToolCall>();
 
     while (true) {
@@ -18,7 +19,8 @@ export class StreamReader {
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        this.processLine(line.trim(), toolCallsMap, (t) => { fullText += t; }, (id) => { conversationId = id; });
+        const result = this.processLine(line.trim(), toolCallsMap, (t) => { fullText += t; }, (id) => { conversationId = id; });
+        if (result?.quota) quota = result.quota;
       }
     }
 
@@ -31,7 +33,7 @@ export class StreamReader {
 
     reader.releaseLock();
     const toolCalls = [...toolCallsMap.values()].filter(tc => tc.function.name);
-    return { text: fullText, toolCalls, conversationId, done: true };
+    return { text: fullText, toolCalls, conversationId, done: true, quota };
   }
 
   private processLine(
@@ -39,7 +41,7 @@ export class StreamReader {
     toolCallsMap: Map<string, ToolCall>,
     onText: (t: string) => void,
     onConversation: (id: string) => void,
-  ): void {
+  ): { quota?: PostmanQuota } | void {
     if (!line.startsWith("data: ")) return;
     const raw = line.slice(6);
     if (raw === "[DONE]") return;
@@ -52,6 +54,16 @@ export class StreamReader {
         onText(event?.data?.textContent ?? "");
       } else if (et === "conversation") {
         onConversation(event?.data?.id ?? "");
+      } else if (et === "usage") {
+        return {
+          quota: {
+            limit: event?.data?.limit ?? 0,
+            usage: event?.data?.usage ?? 0,
+            cycleStart: event?.data?.usageCycle?.start ?? "",
+            cycleEnd: event?.data?.usageCycle?.end ?? "",
+            usageState: event?.data?.usageState ?? "AVAILABLE",
+          },
+        };
       } else if (et === "toolCallChunk") {
         for (const tc of (event?.data?.toolCalls ?? [])) {
           const existing = toolCallsMap.get(tc.id);

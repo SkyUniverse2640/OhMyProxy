@@ -1,15 +1,16 @@
 import { cn } from "../lib/utils";
 import {
-  LayoutDashboard, Key, Settings, ScrollText, Shield, LogOut, X,
+  LayoutDashboard, Key, Settings, ScrollText, Shield, LogOut, X, BarChart3,
 } from "lucide-react";
 import { useAuthStore } from "../store/auth-store";
 import { Button } from "./ui/button";
 
 const navItems = [
-  { href: "#/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "#/dashboard/tokens", label: "Tokens", icon: Key },
-  { href: "#/dashboard/settings", label: "Settings", icon: Settings },
-  { href: "#/dashboard/logs", label: "Logs", icon: ScrollText },
+  { href: "#/management", label: "Overview", icon: LayoutDashboard },
+  { href: "#/management/quota", label: "Quota", icon: BarChart3 },
+  { href: "#/management/tokens", label: "Tokens", icon: Key },
+  { href: "#/management/settings", label: "Settings", icon: Settings },
+  { href: "#/management/logs", label: "Logs", icon: ScrollText },
 ];
 
 interface SidebarNavProps {
@@ -17,7 +18,7 @@ interface SidebarNavProps {
 }
 
 export function SidebarNav({ onClose }: SidebarNavProps) {
-  const pathname = window.location.hash || "#/dashboard";
+  const pathname = window.location.hash || "#/management";
   const logout = useAuthStore((s) => s.logout);
 
   const handleNav = () => {

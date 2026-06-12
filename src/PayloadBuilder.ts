@@ -98,6 +98,62 @@ export class PayloadBuilder {
     };
   }
 
+  refreshQuota(): any {
+    const p = this.settings.postman;
+    return {
+      input: {
+        chatType: "USER_QUERY",
+        query: "ping",
+        toolResponse: "",
+        useCase: null,
+        conversationId: crypto.randomUUID(),
+        agent: null,
+        product: "workspace_v12",
+      },
+      platform: p.platform,
+      clientTools: {
+        nativeToolsHash: p.ui_build.tools_hash,
+        excludedTools: [
+          "listWorkspaceDocs", "getWorkspaceDoc", "createWorkspaceDoc",
+          "updateWorkspaceDoc", "deleteWorkspaceDoc", "askUser",
+          "bash", "bashOutput", "editFile", "openFile", "viewFile",
+          "runCollection", "runRequest", "sendRequest", "createRequest",
+          "deleteRequest", "getRequest", "addCollectionRequest",
+          "addCollectionFolder", "manageEnvironment", "runTest",
+          "collectionRun", "monitor", "mock", "manageWorkspace",
+          "versionControl", "git", "fork", "merge", "pullRequest",
+          "inviteUser", "shareCollection", "workspaceSettings",
+          "addVariable", "getVariable", "updateVariable",
+          "deleteVariable", "setEnvironment", "createEnvironment",
+          "deleteEnvironment", "createCollection", "deleteCollection",
+          "createWorkspace", "createApi", "createSchema",
+          "createSpec", "createDocumentation", "generateCode",
+          "search", "navigate", "manageTab", "scroll", "click",
+          "hover", "select", "type", "copy", "paste", "wait",
+        ],
+        thirdParty: {},
+      },
+      clientKBTerms: {
+        nativeTermsHash: p.ui_build.kb_hash,
+        excludedKBTerms: ["DATASETS"],
+      },
+      mandatoryContext: { workspaceId: p.workspace_id },
+      selectedContext: [],
+      backgroundContext: [
+        { type: "ACTIVE_ENVIRONMENT", value: null },
+        { type: "ACTIVE_WORKSPACE", value: { name: p.workspace_name ?? "My Workspace", id: p.workspace_id, userRole: "Admin" }},
+        { type: "TAB_LIST", value: [{ tabId: "quota-refresh", isActive: true, entityType: "overview", entityId: "overview", tabTitle: "Overview", name: "Overview", isDirty: null, isPreview: false, isConflicted: false }]},
+        { type: "VARIABLES_IN_SCOPE", value: [] },
+        { type: "ENVIRONMENT_LIST", value: [] },
+        { type: "COLLECTION_LIST", value: [] },
+        { type: "USER_METADATA", value: { role: "", domain: "a personal account", createdAt: "2026-04-20T09:50:33.000Z", teamIntent: "buildAndTestYourAPIs" }},
+        { type: "FILE_VIEWER_FOLDER", value: { path: null, isOpen: false, platform: "desktop", description: "No folder opened", projectOverview: null }},
+      ],
+      availableSkills: [],
+      devModeOptions: this.buildDevModeOptions(),
+    };
+  }
+
   private buildDevModeOptions() {
     return {
       selectedModel: this.settings.postman.model,

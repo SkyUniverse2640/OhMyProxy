@@ -87,6 +87,13 @@ class ApiClient {
   async getQuota() {
     return this.request<import("./types").QuotaResponse>("/management/quota");
   }
+
+  async refreshQuota(tokenId?: number): Promise<{ refreshed: number; tokens: any[] }> {
+    const path = tokenId != null
+      ? `/management/quota/refresh/${tokenId}`
+      : "/management/quota/refresh";
+    return this.request(path, { method: "POST" });
+  }
 }
 
 export const apiClient = new ApiClient();

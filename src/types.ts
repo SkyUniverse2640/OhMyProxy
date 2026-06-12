@@ -54,11 +54,20 @@ export interface PostmanToolResponse {
   toolResponseStatus: "SUCCESS" | "ERROR";
 }
 
+export interface PostmanQuota {
+  limit: number;
+  usage: number;
+  cycleStart: string;
+  cycleEnd: string;
+  usageState: string;
+}
+
 export interface PostmanStreamResult {
   text: string;
   toolCalls: ToolCall[];
   conversationId: string;
   done: boolean;
+  quota?: PostmanQuota;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
