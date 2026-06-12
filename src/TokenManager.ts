@@ -15,7 +15,7 @@ export class TokenManager {
 
   current(): AccessToken | null {
     const active = this.getActive();
-    return active.length ? active[this.idx % active.length] : null;
+    return active.length ? (active[this.idx % active.length] ?? null) : null;
   }
 
   rotate(): AccessToken | null {

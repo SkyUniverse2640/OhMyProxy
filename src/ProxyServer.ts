@@ -159,13 +159,13 @@ export class ProxyServer {
         // Transpile TSX/TS to JS for browser consumption
         if (ext === "tsx" || ext === "ts" || ext === "jsx") {
             try {
-                const source = file.text();
+                const source = readFileSync(relPath, "utf-8");
                 // Use Bun's built-in transpiler to convert TSX → JS
-                // Bun.Transpiler is available globally in Bun runtime
-                const transpiled = Bun.Transpiler.transformSync(source, {
+                const transpiler = new Bun.Transpiler({
                     loader: ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : "ts",
                     target: "browser",
                 });
+                const transpiled = transpiler.transformSync(source);
                 return new Response(transpiled, {
                     headers: {
                         "Content-Type": "text/javascript; charset=utf-8",
@@ -227,13 +227,13 @@ export class ProxyServer {
 
     private handleTokenById(path: string, method: string): Response {
         if (method !== 'DELETE') return this.json({ error: 'Method not allowed' }, 405);
-        const id = parseInt(path.split('/')[2]);
+        const id = parseInt(path.split('/')[2] ?? '');
         return this.tokens.remove(id) ? this.json({ message: `Token #${id} dihapus` }) : this.json({ error: 'Tidak ditemukan' }, 404);
     }
 
     private handleTokenToggle(path: string, method: string): Response {
         if (method !== 'PATCH') return this.json({ error: 'Method not allowed' }, 405);
-        const id = parseInt(path.split('/')[2]);
+        const id = parseInt(path.split('/')[2] ?? '');
         const t = this.tokens.toggle(id);
         return t ? this.json({ message: `Token #${id} ${t.active ? 'aktif' : 'nonaktif'}` }) : this.json({ error: 'Tidak ditemukan' }, 404);
     }
@@ -449,8 +449,8 @@ export class ProxyServer {
 
     private extractLastUserMessage(body: AnthropicRequest): string {
         for (let i = body.messages.length - 1; i >= 0; i--) {
-            if (body.messages[i].role === 'user') {
-                return this.extractText(body.messages[i].content);
+            if (body.messages[i]?.role === 'user') {
+                return this.extractText(body.messages[i]?.content ?? '');
             }
         }
         return '';
