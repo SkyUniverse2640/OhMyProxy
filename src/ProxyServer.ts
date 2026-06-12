@@ -6,6 +6,7 @@ import { ToolExecutor } from './ToolExecutor';
 import { PayloadBuilder } from './PayloadBuilder';
 import { StreamReader } from './StreamReader';
 import { ManagementHandler } from './ManagementHandler';
+import { OAuthHandler } from './OAuthHandler';
 
 const CORS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
@@ -22,6 +23,7 @@ export class ProxyServer {
     private readonly payload: PayloadBuilder;
     private readonly streamReader: StreamReader;
     private readonly management: ManagementHandler;
+    private readonly oauth: OAuthHandler;
 
     constructor(private readonly config: Config) {
         this.settings = config.loadSettings();
@@ -30,6 +32,7 @@ export class ProxyServer {
         this.payload = new PayloadBuilder(this.settings);
         this.streamReader = new StreamReader();
         this.management = new ManagementHandler(config, this.tokens);
+        this.oauth = new OAuthHandler(config, this.tokens);
     }
 
     start(): void {
@@ -68,6 +71,10 @@ export class ProxyServer {
         // Management API
         const mgmtResponse = await this.management.handle(req);
         if (mgmtResponse) return mgmtResponse;
+
+        // OAuth endpoints (public, no management key required)
+        const oauthResponse = await this.oauth.handle(req);
+        if (oauthResponse) return oauthResponse;
 
         if (path !== '/v1/messages' || method !== 'POST') {
             return this.json({ error: `Route tidak ditemukan: ${method} ${path}` }, 404);
