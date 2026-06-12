@@ -118,6 +118,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - name: Embed version
+        shell: bash
         run: |
           V="${{ needs.prepare.outputs.version }}"
           echo "export const VERSION = \"${V#v}\";" > src/version.ts
