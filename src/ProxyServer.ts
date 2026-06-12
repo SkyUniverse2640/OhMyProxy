@@ -146,8 +146,8 @@ export class ProxyServer {
         const mimeTypes: Record<string, string> = {
             tsx: "text/javascript",
             ts: "text/javascript",
-            js: "text/javascript",
-            jsx: "text/javascript",
+            js: "application/javascript",
+            jsx: "application/javascript",
             css: "text/css",
             svg: "image/svg+xml",
             png: "image/png",
