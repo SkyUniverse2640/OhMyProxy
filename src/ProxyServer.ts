@@ -1,6 +1,6 @@
 import type { Settings, AccessToken, AnthropicRequest, PostmanToolResponse, PostmanStreamResult } from './types';
 import { readFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { Config } from './Config';
 import { Logger } from './Logger';
 import { TokenManager } from './TokenManager';
@@ -12,10 +12,46 @@ import { ManagementHandler } from './ManagementHandler';
 const CORS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, PATCH, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta, X-Management-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, x-api-key, anthropic-version, anthropic-beta',
 };
 
 const MAX_TOOL_ROUNDS = 8;
+
+class RateLimiter {
+  private windows = new Map<string, { count: number; resetAt: number }>();
+
+  constructor(private maxRequests: number, private windowMs: number, private errorMessage: string) {}
+
+  check(key: string): Response | null {
+    const now = Date.now();
+    let w = this.windows.get(key);
+    if (!w || now >= w.resetAt) {
+      w = { count: 0, resetAt: now + this.windowMs };
+      this.windows.set(key, w);
+    }
+    w.count++;
+    if (w.count > this.maxRequests) {
+      const retryAfter = Math.ceil((w.resetAt - now) / 1000);
+      return new Response(
+        JSON.stringify({ error: this.errorMessage, retryAfter }),
+        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(retryAfter) } }
+      );
+    }
+    // Periodic cleanup
+    if (this.windows.size > 10_000) {
+      for (const [k, v] of this.windows) {
+        if (now >= v.resetAt) this.windows.delete(k);
+      }
+    }
+    return null;
+  }
+
+  getClientIp(req: Request): string {
+    return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+      ?? req.headers.get("x-real-ip")
+      ?? "127.0.0.1";
+  }
+}
 
 export class ProxyServer {
     private readonly settings: Settings;
@@ -24,6 +60,8 @@ export class ProxyServer {
     private readonly payload: PayloadBuilder;
     private readonly streamReader: StreamReader;
     private readonly management: ManagementHandler;
+    private readonly mgmtLimiter = new RateLimiter(30, 60_000, "Too many management requests. Please slow down.");
+    private readonly messageLimiter = new RateLimiter(20, 60_000, "Too many proxy requests. Please slow down.");
 
     constructor(private readonly config: Config) {
         this.settings = config.loadSettings();
@@ -97,10 +135,21 @@ export class ProxyServer {
 
         if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
+        // Rate limit management endpoints
+        if (path.startsWith("/management")) {
+            const clientIp = this.mgmtLimiter.getClientIp(req);
+            const limited = this.mgmtLimiter.check(clientIp);
+            if (limited) return limited;
+        }
+
+        // Rate limit proxy messages
+        if (path === "/v1/messages" && method === "POST") {
+            const clientIp = this.messageLimiter.getClientIp(req);
+            const limited = this.messageLimiter.check(clientIp);
+            if (limited) return limited;
+        }
+
         if (path === '/health') return this.handleHealth();
-        if (path === '/tokens') return this.handleTokens(req, method);
-        if (path.match(/^\/tokens\/\d+$/)) return this.handleTokenById(path, method);
-        if (path.match(/^\/tokens\/\d+\/toggle$/)) return this.handleTokenToggle(path, method);
         if (path === '/v1/context' && method === 'DELETE') return this.json({ message: 'Context cleared (proxy is stateless)' });
         if (path === '/v1/models') return this.json({ data: [{ id: this.settings.postman.model, object: 'model', created: 0, owned_by: 'postman' }] });
 
@@ -114,7 +163,7 @@ export class ProxyServer {
         if (mgmtResponse) return mgmtResponse;
 
         // Dashboard static files (CSS, JS, TSX, TS)
-        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
             if (path === "/output.css") {
                 return this.serveStatic("src/dashboard/output.css", "text/css");
             }
@@ -128,7 +177,7 @@ export class ProxyServer {
         }
 
         // Dashboard SPA fallback (non-API GET requests → index.html)
-        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
             return this.serveDashboard();
         }
 
@@ -169,8 +218,23 @@ export class ProxyServer {
     }
 
     private serveDashboardFile(path: string): Response {
-        const relPath = join(import.meta.dir, "..", "src", "dashboard", path.replace(/^\//, ""));
-        const file = Bun.file(relPath);
+        // Decode URL-encoded characters (e.g., %2e%2e%2f → ../)
+        const decoded = decodeURIComponent(path);
+        // Reject paths that differ after decoding (indicates attempted encoding bypass)
+        if (decoded !== path && (decoded.includes("..") || decoded.includes("\0"))) {
+            return new Response("Forbidden", { status: 403 });
+        }
+        const cleanPath = path.replace(/^\//, "");
+        // Reject any path containing raw traversal sequences
+        if (cleanPath.includes("..") || cleanPath.includes("\0")) {
+            return new Response("Forbidden", { status: 403 });
+        }
+        const baseDir = resolve(import.meta.dir, "..", "src", "dashboard");
+        const resolved = resolve(baseDir, cleanPath);
+        if (!resolved.startsWith(baseDir + "/") && resolved !== baseDir) {
+            return new Response("Forbidden", { status: 403 });
+        }
+        const file = Bun.file(resolved);
 
         if (!file.size) {
             return new Response("Not found", { status: 404 });
@@ -193,7 +257,7 @@ export class ProxyServer {
         // Transpile TSX/TS to JS for browser consumption
         if (ext === "tsx" || ext === "ts" || ext === "jsx") {
             try {
-                const source = readFileSync(relPath, "utf-8");
+                const source = readFileSync(resolved, "utf-8");
                 // Use Bun's built-in transpiler to convert TSX → JS
                 const transpiler = new Bun.Transpiler({
                     loader: ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : "ts",
@@ -372,7 +436,7 @@ export class ProxyServer {
             try {
                 await this.runProxyLoop(userQuery, cwd, workspaceId, token, writer, encoder, echoModel, reqId);
             } catch (e: any) {
-                this.logger.log('error', `[${reqId}] 💥 Loop error: ${e.message}`);
+                this.logger.log('error', `[${reqId}] 💥 Loop error: ${e?.message ?? String(e)}`);
             } finally {
                 await writer.close().catch(() => {});
             }
@@ -470,7 +534,7 @@ export class ProxyServer {
 
         if (!resp.ok) {
             const errText = await resp.text().catch(() => '');
-            this.logger.log('error', `[${reqId}] ❌ Postman ${resp.status}: ${errText.slice(0, 200)}`);
+            this.logger.log('error', `[${reqId}] ❌ Postman HTTP ${resp.status}`);
 
             if (resp.status === 429 && retryCount < MAX_RETRIES) {
                 this.tokens.recordRateLimit(token.id);
