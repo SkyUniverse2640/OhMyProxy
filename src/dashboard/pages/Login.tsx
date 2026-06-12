@@ -12,8 +12,8 @@ interface LoginProps {
 }
 
 export function Login({ onLogin }: LoginProps) {
-  const { managementKey, setCredentials, login } = useAuthStore();
-  const [key, setKey] = useState(managementKey);
+  const { apiKey, setCredentials, login } = useAuthStore();
+  const [key, setKey] = useState(apiKey);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,7 +29,7 @@ export function Login({ onLogin }: LoginProps) {
       toast.success("Connected to proxy");
       onLogin();
     } else {
-      toast.error("Authentication failed. Check your management key.");
+      toast.error("Authentication failed. Check your API key.");
     }
   };
 
@@ -41,19 +41,19 @@ export function Login({ onLogin }: LoginProps) {
             <Shield className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-2xl">OhMyProxy</CardTitle>
-          <CardDescription>Enter your management key to continue</CardDescription>
+          <CardDescription>Enter your API key to continue</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="key" className="flex items-center gap-2">
                 <Key className="h-4 w-4" />
-                Management Key
+                API Key
               </Label>
               <Input
                 id="key"
                 type="password"
-                placeholder="Enter your management key"
+                placeholder="Enter your API key"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 disabled={loading}
