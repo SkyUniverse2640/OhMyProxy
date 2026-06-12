@@ -8,3 +8,4 @@ settings.json
 list_access_token.json
 src/dashboard/dist/
 src/dashboard/output.css
+proxy.log
