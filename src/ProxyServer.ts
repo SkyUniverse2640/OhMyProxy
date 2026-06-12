@@ -88,6 +88,9 @@ export class ProxyServer {
             if (path === "/output.css") {
                 return this.serveStatic("src/dashboard/output.css", "text/css");
             }
+            if (path === "/dist/app.js") {
+                return this.serveStatic("src/dashboard/dist/app.js", "application/javascript");
+            }
             const ext = path.split(".").pop() || "";
             if (["tsx", "ts", "js", "jsx", "css", "svg", "png", "ico"].includes(ext)) {
                 return this.serveDashboardFile(path);
