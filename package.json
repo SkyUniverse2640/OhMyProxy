@@ -9,8 +9,9 @@
     "dev": "bun --watch index.ts",
     "build:css": "bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css",
     "build:css:min": "bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css --minify",
-    "prestart": "bun run build:css",
-    "predev": "bun run build:css"
+    "build:dashboard": "bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist --target=browser --minify",
+    "prestart": "bun run build:dashboard && bun run build:css",
+    "predev": "bun run build:dashboard && bun run build:css"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",
