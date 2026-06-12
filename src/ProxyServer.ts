@@ -78,6 +78,11 @@ export class ProxyServer {
         const oauthResponse = await this.oauth.handle(req);
         if (oauthResponse) return oauthResponse;
 
+        // Dashboard static files
+        if (path === "/output.css") {
+            return this.serveStatic("src/dashboard/output.css", "text/css");
+        }
+
         // Dashboard SPA fallback (non-API GET requests → index.html)
         if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
             return this.serveDashboard();
