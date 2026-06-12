@@ -126,23 +126,23 @@ jobs:
         include:
           - os: ubuntu-latest
             bun-target: bun-linux-x64
-            name: linux_amd64
+            platform: linux_amd64
             ext: ''
           - os: ubuntu-latest
             bun-target: bun-linux-arm64
-            name: linux_aarch64
+            platform: linux_aarch64
             ext: ''
           - os: windows-latest
             bun-target: bun-windows-x64
-            name: windows_amd64
+            platform: windows_amd64
             ext: '.exe'
           - os: macos-latest
             bun-target: bun-darwin-x64
-            name: darwin_amd64
+            platform: darwin_amd64
             ext: ''
           - os: macos-latest
             bun-target: bun-darwin-arm64
-            name: darwin_aarch64
+            platform: darwin_aarch64
             ext: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -169,7 +169,7 @@ jobs:
         run: |
           VERSION="${{ needs.build-assets.outputs.version }}"
           VERSION="${VERSION#v}"
-          NAME="OhMyProxy_${VERSION}_${{ matrix.name }}"
+          NAME="OhMyProxy_${VERSION}_\${{ matrix.platform }}"
           BINARY=ohmyproxy${{ matrix.ext }}
           PKG_DIR=${NAME}
 
@@ -180,7 +180,7 @@ jobs:
           cp src/dashboard/dist/app.js ${PKG_DIR}/src/dashboard/dist/
           cp settings.example.json ${PKG_DIR}/settings.json 2>/dev/null || echo '{"proxy":{"port":8020,"host":"127.0.0.1"},"api_keys":["change-me"],"postman":{},"logging":{"enabled":true,"level":"info"}}' > ${PKG_DIR}/settings.json
           echo '[]' > ${PKG_DIR}/list_access_token.json
-          echo "OhMyProxy v${VERSION} - ${{ matrix.name }}" > ${PKG_DIR}/README.txt
+          echo "OhMyProxy v${VERSION} - \${{ matrix.platform }}" > ${PKG_DIR}/README.txt
           echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -194,7 +194,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          name: ${{ matrix.platform }}
           path: ${{ env.artifact }}
           retention-days: 1
 
