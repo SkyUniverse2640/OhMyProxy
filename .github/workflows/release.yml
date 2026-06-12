@@ -12,14 +12,9 @@ permissions:
   contents: write
 
 jobs:
-  # Build dashboard assets once (shared across platforms)
-  build-assets:
+  build-and-release:
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      exists: ${{ steps.check.outputs.exists }}
-      changelog: ${{ steps.changelog.outputs.body }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,22 +22,19 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # ─── Version & Changelog ──────────────────────────────────────────
+
       - name: Auto version
         id: version
         run: |
-          # Get current version
           CURRENT=$(node -p "require('./package.json').version")
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-
-          # Analyze commits since last tag for bump type
           LAST_TAG=$(git tag --sort=-v:refname | head -1 || echo "")
           if [ -z "$LAST_TAG" ]; then
             COMMITS=$(git log --oneline --no-merges)
           else
             COMMITS=$(git log --oneline --no-merges "${LAST_TAG}..HEAD")
           fi
-
-          # Determine bump: BREAKING/major > feat/minor > fix/patch
           if echo "$COMMITS" | grep -qiE '(BREAKING[ -]CHANGE|feat!|refactor!|fix!|^[a-z]+![:\(])'; then
             MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0; BUMP="major"
           elif echo "$COMMITS" | grep -qiE '^[a-z0-9]+ feat[:\(]'; then
@@ -50,9 +42,8 @@ jobs:
           elif [ -n "$COMMITS" ]; then
             PATCH=$((PATCH + 1)); BUMP="patch"
           else
-            echo "No commits to release"; echo "exists=true" >> $GITHUB_OUTPUT; exit 0
+            echo "No commits to release"; echo "skip=true" >> $GITHUB_OUTPUT; exit 0
           fi
-
           NEXT="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=v${NEXT}" >> $GITHUB_OUTPUT
           echo "bump=${BUMP}" >> $GITHUB_OUTPUT
@@ -62,15 +53,13 @@ jobs:
         id: check
         run: |
           if gh release view "${{ steps.version.outputs.version }}" &>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "skip compiling, release already exists"
+            exit 0
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Generate changelog
-        if: steps.check.outputs.exists == 'false'
         id: changelog
         run: |
           LAST_TAG=$(git tag --sort=-v:refname | head -1 || echo "")
@@ -84,7 +73,6 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Bump version in package.json
-        if: steps.check.outputs.exists == 'false'
         run: |
           NEXT_VERSION="${{ steps.version.outputs.version }}"
           NEXT_VERSION="${NEXT_VERSION#v}"
@@ -99,168 +87,127 @@ jobs:
           git commit -m "chore: bump version to ${NEXT_VERSION} [skip ci]" || true
           git push origin main || true
 
+      # ─── Build Dashboard ──────────────────────────────────────────────
+
       - name: Build dashboard
-        if: steps.check.outputs.exists == 'false'
         run: |
           bun install
           bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css
           bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
 
-      - name: Upload dashboard assets
-        if: steps.check.outputs.exists == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dashboard-assets
-          path: |
-            src/dashboard/index.html
-            src/dashboard/output.css
-            src/dashboard/dist/app.js
-          retention-days: 1
+      # ─── Compile All Platforms (Bun cross-compiles from x64) ──────────
 
-  # Compile binaries for each platform
-  compile:
-    needs: build-assets
-    if: needs.build-assets.outputs.exists == 'false'
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            bun-target: bun-linux-x64
-            platform: linux_amd64
-            ext: ''
-          - os: windows-latest
-            bun-target: bun-windows-x64
-            platform: windows_amd64
-            ext: '.exe'
-          - os: macos-latest
-            bun-target: bun-darwin-arm64
-            platform: darwin_aarch64
-            ext: ''
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Download dashboard assets
-        uses: actions/download-artifact@v4
-        with:
-          name: dashboard-assets
-          path: src/dashboard/
-
-      - name: Create dist dir
-        shell: bash
-        run: mkdir -p src/dashboard/dist 2>/dev/null; true
-
-      - name: Compile binary
+      - name: Compile & package all platforms
         run: |
-          bun build --compile --target=${{ matrix.bun-target }} ./index.ts --outfile ohmyproxy${{ matrix.ext }}
-
-      - name: Package release
-        shell: bash
-        run: |
-          VERSION="${{ needs.build-assets.outputs.version }}"
+          VERSION="${{ steps.version.outputs.version }}"
           VERSION="${VERSION#v}"
-          NAME="OhMyProxy_${VERSION}_\${{ matrix.platform }}"
-          BINARY=ohmyproxy${{ matrix.ext }}
-          PKG_DIR=${NAME}
 
-          mkdir -p ${PKG_DIR}/src/dashboard/dist
-          cp ${BINARY} ${PKG_DIR}/
-          cp src/dashboard/index.html ${PKG_DIR}/src/dashboard/
-          cp src/dashboard/output.css ${PKG_DIR}/src/dashboard/
-          cp src/dashboard/dist/app.js ${PKG_DIR}/src/dashboard/dist/
-          cp settings.example.json ${PKG_DIR}/settings.json 2>/dev/null || echo '{"proxy":{"port":8020,"host":"127.0.0.1"},"api_keys":["change-me"],"postman":{},"logging":{"enabled":true,"level":"info"}}' > ${PKG_DIR}/settings.json
-          echo '[]' > ${PKG_DIR}/list_access_token.json
-          echo "OhMyProxy v${VERSION} - \${{ matrix.platform }}" > ${PKG_DIR}/README.txt
-          echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
+          # Define targets: bun-target|platform|ext
+          TARGETS=(
+            "bun-linux-x64|linux_amd64|"
+            "bun-linux-arm64|linux_aarch64|"
+            "bun-windows-x64|windows_amd64|.exe"
+            "bun-darwin-x64|darwin_amd64|"
+            "bun-darwin-arm64|darwin_aarch64|"
+          )
 
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ${NAME}.zip ${PKG_DIR}/
-            echo "artifact=${NAME}.zip" >> $GITHUB_ENV
-          else
-            tar czf ${NAME}.tar.gz ${PKG_DIR}/
-            echo "artifact=${NAME}.tar.gz" >> $GITHUB_ENV
-          fi
+          mkdir -p dist
 
-      - name: Upload binary artifact
+          for entry in "${TARGETS[@]}"; do
+            IFS='|' read -r BUN_TARGET PLATFORM EXT <<< "$entry"
+            BINARY="ohmyproxy${EXT}"
+            NAME="OhMyProxy_${VERSION}_${PLATFORM}"
+            PKG_DIR="${NAME}"
+
+            echo "::group::Compiling ${PLATFORM}"
+            bun build --compile --target=${BUN_TARGET} ./index.ts --outfile ${BINARY}
+            echo "::endgroup::"
+
+            echo "::group::Packaging ${PLATFORM}"
+            mkdir -p ${PKG_DIR}/src/dashboard/dist
+            cp ${BINARY} ${PKG_DIR}/
+            cp src/dashboard/index.html ${PKG_DIR}/src/dashboard/
+            cp src/dashboard/output.css ${PKG_DIR}/src/dashboard/
+            cp src/dashboard/dist/app.js ${PKG_DIR}/src/dashboard/dist/
+            cp settings.example.json ${PKG_DIR}/settings.json 2>/dev/null || echo '{"proxy":{"port":8020,"host":"127.0.0.1"},"api_keys":["change-me"],"postman":{},"logging":{"enabled":true,"level":"info"}}' > ${PKG_DIR}/settings.json
+            echo '[]' > ${PKG_DIR}/list_access_token.json
+            echo "OhMyProxy v${VERSION} - ${PLATFORM}" > ${PKG_DIR}/README.txt
+            echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
+
+            if [[ "${PLATFORM}" == windows_* ]]; then
+              sudo apt-get install -y p7zip-full 2>/dev/null || true
+              7z a ${NAME}.zip ${PKG_DIR}/
+              ARTIFACT="${NAME}.zip"
+            else
+              tar czf ${NAME}.tar.gz ${PKG_DIR}/
+              ARTIFACT="${NAME}.tar.gz"
+            fi
+
+            mkdir -p dist/${PLATFORM}
+            mv ${ARTIFACT} dist/${PLATFORM}/
+            # Cleanup for next platform
+            rm -rf ${PKG_DIR} ${BINARY}
+            echo "::endgroup::"
+          done
+
+          # Generate checksums
+          cd dist
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; \
+            | sed 's|^\./||' \
+            | sed 's|^[^/]*/||' \
+            | sort > checksums.txt
+          cat checksums.txt
+          cd ..
+
+      - name: Upload all artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
-          path: ${{ env.artifact }}
-          retention-days: 1
+          name: release-files
+          path: dist/
 
-  # Create release with all binaries
-  release:
-    needs: [build-assets, compile]
-    if: needs.build-assets.outputs.exists == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: List artifacts
-        run: find artifacts/ -type f
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          for dir in */; do
-            for file in "$dir"*; do
-              [ -f "$file" ] && sha256sum "$file" >> checksums.txt
-            done
-          done
-          # Shorten paths: artifacts/linux-x64/ohmyproxy-linux-x64.tar.gz → ohmyproxy-linux-x64.tar.gz
-          sed -i 's|artifacts/[^/]*/||g' checksums.txt
-          cat checksums.txt
+      # ─── Create GitHub Release ────────────────────────────────────────
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build-assets.outputs.version }}
-          name: Release ${{ needs.build-assets.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
           body: |
             ## Changes
             ```
-            ${{ needs.build-assets.outputs.changelog }}
+            ${{ steps.changelog.outputs.body }}
             ```
 
             ## Download
 
             | Platform | File |
             |----------|------|
-            | Linux x64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_linux_amd64.tar.gz` |
-            | macOS ARM64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_darwin_aarch64.tar.gz` |
-            | Windows x64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_windows_amd64.zip` |
+            | Linux x64 | `OhMyProxy_${{ steps.version.outputs.version }}_linux_amd64.tar.gz` |
+            | Linux ARM64 | `OhMyProxy_${{ steps.version.outputs.version }}_linux_aarch64.tar.gz` |
+            | macOS x64 | `OhMyProxy_${{ steps.version.outputs.version }}_darwin_amd64.tar.gz` |
+            | macOS ARM64 | `OhMyProxy_${{ steps.version.outputs.version }}_darwin_aarch64.tar.gz` |
+            | Windows x64 | `OhMyProxy_${{ steps.version.outputs.version }}_windows_amd64.zip` |
             | **Checksums** | `checksums.txt` |
-
-            > Note: Bun `--compile` only supports native compilation. Linux ARM64 and macOS x64 require native ARM64/x64 runners respectively (not available on GitHub Actions).
 
             ## Quick Start
             1. Download for your platform
-            2. Extract: `tar xzf ohmyproxy-<platform>.tar.gz` or unzip
+            2. Extract: `tar xzf OhMyProxy_*.tar.gz` or unzip
             3. Edit `settings.json` with your API keys
-            4. Run: `./ohmyproxy`
+            4. Run: `./ohmyproxy` (or `ohmyproxy.exe` on Windows)
             5. Open http://127.0.0.1:8020/
 
             ## From Source
             ```bash
             git clone https://github.com/SkyUniverse2640/OhMyProxy.git
-            cd OhMyProxy && git checkout ${{ needs.build-assets.outputs.version }}
+            cd OhMyProxy && git checkout ${{ steps.version.outputs.version }}
             bun install && bun run build:css
             bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
             bun run index.ts
             ```
           files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
-            artifacts/checksums.txt
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/checksums.txt
           draft: false
           prerelease: false
           generate_release_notes: true
