@@ -127,9 +127,9 @@ export class ProxyServer {
         try {
             const fullPath = join(import.meta.dir, "..", relPath);
             const content = readFileSync(fullPath);
-            return new Response(content, {
+            return new Response(new Uint8Array(content).buffer, {
                 headers: {
-                    "Content-Type": contentType,
+                    "Content-Type": `${contentType}; charset=utf-8`,
                     "Cache-Control": "no-cache, no-store, must-revalidate",
                 },
             });
