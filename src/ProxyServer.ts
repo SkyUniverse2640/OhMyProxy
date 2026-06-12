@@ -106,7 +106,12 @@ export class ProxyServer {
     private serveDashboard(): Response {
         const html = readFileSync(join(import.meta.dir, "..", "src", "dashboard", "index.html"), "utf-8");
         return new Response(html, {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+            headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
         });
     }
 
@@ -114,7 +119,10 @@ export class ProxyServer {
         try {
             const file = Bun.file(join(import.meta.dir, "..", relPath));
             return new Response(file, {
-                headers: { "Content-Type": contentType },
+                headers: {
+                    "Content-Type": contentType,
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                },
             });
         } catch {
             return new Response("Not found", { status: 404 });
@@ -154,12 +162,18 @@ export class ProxyServer {
                     target: "browser",
                 });
                 return new Response(transpiled, {
-                    headers: { "Content-Type": "text/javascript; charset=utf-8" },
+                    headers: {
+                        "Content-Type": "text/javascript; charset=utf-8",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                    },
                 });
             } catch {
                 // Fallback: serve raw (browser will likely fail parsing, but at least shows the error)
                 return new Response(file, {
-                    headers: { "Content-Type": "text/javascript; charset=utf-8" },
+                    headers: {
+                        "Content-Type": "text/javascript; charset=utf-8",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                    },
                 });
             }
         }
