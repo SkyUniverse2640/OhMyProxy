@@ -7,6 +7,7 @@ export interface UiBuild {
 
 export interface Settings {
   proxy: { port: number; host: string };
+  management_key?: string;
   secret_keys: string[];
   postman: {
     base_url: string;
