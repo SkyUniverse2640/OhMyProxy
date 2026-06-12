@@ -4,7 +4,7 @@ class ApiClient {
   private getHeaders(): Record<string, string> {
     return {
       "Content-Type": "application/json",
-      "X-Management-Key": useAuthStore.getState().managementKey,
+      Authorization: `Bearer ${useAuthStore.getState().apiKey}`,
     };
   }
 

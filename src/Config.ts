@@ -29,18 +29,39 @@ export class Config {
     }
     this._settingsCache = JSON.parse(readFileSync(path, "utf-8")) as Settings;
 
+    // Migrate legacy management_key + secret_keys → api_keys
+    const raw = this._settingsCache as any;
+    if (!raw.api_keys || !Array.isArray(raw.api_keys) || raw.api_keys.length === 0) {
+      const merged = new Set<string>();
+      if (raw.management_key && typeof raw.management_key === "string") {
+        merged.add(raw.management_key);
+      }
+      if (Array.isArray(raw.secret_keys)) {
+        for (const k of raw.secret_keys) {
+          if (typeof k === "string") merged.add(k);
+        }
+      }
+      if (merged.size > 0) {
+        raw.api_keys = [...merged];
+      } else {
+        raw.api_keys = ["change-me"];
+      }
+      delete raw.management_key;
+      delete raw.secret_keys;
+      writeFileSync(path, JSON.stringify(raw, null, 2));
+      console.log("[config] Migrated legacy credentials to api_keys list");
+    }
+
     // Warn about default credentials on every load
     const s = this._settingsCache;
-    const hasDefaultSecret = s.secret_keys.some(k => k === "change-me");
-    const hasDefaultMgmt = s.management_key === "change-me";
-    if (hasDefaultSecret || hasDefaultMgmt) {
+    const hasDefaultKey = s.api_keys.some(k => k === "change-me");
+    if (hasDefaultKey) {
       console.error(
         "\n" +
         "  ╔══════════════════════════════════════════════════════════════╗\n" +
-        "  ║  SECURITY WARNING: Default credentials detected!            ║\n" +
-        "  ║  Edit settings.json and change:                             ║\n" +
-        (hasDefaultSecret ? "  ║  - secret_keys: \"change-me\" → set a strong random value      ║\n" : "") +
-        (hasDefaultMgmt ? "  ║  - management_key: \"change-me\" → set a strong random value   ║\n" : "") +
+        "  ║  SECURITY WARNING: Default API key detected!               ║\n" +
+        "  ║  Edit settings.json and change api_keys to strong random   ║\n" +
+        "  ║  values. Delete \"change-me\" from the api_keys list.       ║\n" +
         "  ╚══════════════════════════════════════════════════════════════╝\n"
       );
     }
@@ -85,7 +106,7 @@ export class Config {
 
   private getEncryptionKey(salt?: Buffer): { key: Buffer; salt: Buffer } {
     const settings = this.loadSettings();
-    const passphrase = (settings.management_key ?? "change-me").slice(0, 128);
+    const passphrase = (settings.api_keys[0] ?? "change-me").slice(0, 128);
     const actualSalt = salt ?? randomBytes(SALT_LENGTH);
     const key = pbkdf2Sync(passphrase, actualSalt, PBKDF2_ITERATIONS, PBKDF2_KEYLEN, "sha512");
     return { key, salt: actualSalt };
@@ -94,7 +115,7 @@ export class Config {
   // Legacy key derivation (SHA256) for backward-compatible decryption
   private getLegacyEncryptionKey(): Buffer {
     const settings = this.loadSettings();
-    const passphrase = (settings.management_key ?? "change-me").slice(0, 128);
+    const passphrase = (settings.api_keys[0] ?? "change-me").slice(0, 128);
     return createHash("sha256").update(passphrase).digest();
   }
 
@@ -166,11 +187,10 @@ export class Config {
   }
 
   private createDefaultSettings(path: string): void {
-    const mgmtKey = randomBytes(32).toString("hex");
+    const apiKey = randomBytes(32).toString("hex");
     const defaults: Settings = {
       proxy: { port: 8020, host: "127.0.0.1" },
-      secret_keys: ["change-me"],
-      management_key: mgmtKey,
+      api_keys: [apiKey],
       postman: {
         base_url: "https://gateway.postman.com",
         app_version: "12.14.0",
@@ -187,7 +207,7 @@ export class Config {
     };
     writeFileSync(path, JSON.stringify(defaults, null, 2));
     console.log(`[config] Created default settings.json`);
-    console.log(`[config] Management key: ${mgmtKey}`);
-    console.log(`[config] Edit settings.json to configure secret_keys and other options`);
+    console.log(`[config] API key: ${apiKey}  (add more to api_keys list as needed)`);
+    console.log(`[config] Use this key for dashboard login and proxy API authentication`);
   }
 }
