@@ -1,6 +1,7 @@
 import type { Settings, AccessToken, AnthropicRequest, PostmanToolResponse, PostmanStreamResult } from './types';
 import { readFileSync } from "fs";
 import { join } from "path";
+import open from "open";
 import { Config } from './Config';
 import { Logger } from './Logger';
 import { TokenManager } from './TokenManager';
@@ -49,6 +50,10 @@ export class ProxyServer {
       ===============================================
       Go To .claude/settings.json to Setup the Proxy
 `);
+
+        // Auto-open dashboard in browser
+        const dashboardUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/`;
+        open(dashboardUrl).catch(() => {});
 
         Bun.serve({ port, hostname: host, fetch: (req) => this.handle(req), idleTimeout: 255 });
     }
