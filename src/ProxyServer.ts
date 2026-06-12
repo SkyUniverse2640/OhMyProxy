@@ -49,6 +49,42 @@ export class ProxyServer {
 `);
 
         Bun.serve({ port, hostname: host, fetch: (req) => this.handle(req), idleTimeout: 255 });
+
+        // Fetch initial quota for all active tokens (async, non-blocking)
+        this.fetchInitialQuota();
+    }
+
+    private async fetchInitialQuota(): Promise<void> {
+        const tokens = this.tokens.getActive();
+        if (!tokens.length) return;
+
+        console.log(`\n  ⏳ Fetching initial quota for ${tokens.length} token(s)...`);
+
+        for (const token of tokens) {
+            try {
+                const resp = await fetch(`${this.settings.postman.base_url}/chat`, {
+                    method: "POST",
+                    headers: this.payload.headers(token.token),
+                    body: JSON.stringify(this.payload.refreshQuota()),
+                    signal: AbortSignal.timeout(15000),
+                });
+                if (!resp.ok) {
+                    console.log(`  ⚠️  ${token.label}: HTTP ${resp.status}`);
+                    continue;
+                }
+                const result = await this.streamReader.read(resp.body!);
+                if (result.quota?.limit) {
+                    this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
+                    const pct = Math.round(((result.quota.limit - result.quota.usage) / result.quota.limit) * 100);
+                    console.log(`  ✅ ${token.label}: ${result.quota.usage.toLocaleString()} / ${result.quota.limit.toLocaleString()} (${pct}% remaining)`);
+                } else {
+                    console.log(`  ⚠️  ${token.label}: No quota data`);
+                }
+            } catch (e: any) {
+                console.log(`  ❌ ${token.label}: ${e.message}`);
+            }
+        }
+        console.log("");
     }
 
     // ─── HTTP Router ──────────────────────────────────────────────────────
@@ -67,6 +103,11 @@ export class ProxyServer {
         if (path.match(/^\/tokens\/\d+\/toggle$/)) return this.handleTokenToggle(path, method);
         if (path === '/v1/context' && method === 'DELETE') return this.json({ message: 'Context cleared (proxy is stateless)' });
         if (path === '/v1/models') return this.json({ data: [{ id: this.settings.postman.model, object: 'model', created: 0, owned_by: 'postman' }] });
+
+        // Quota refresh (POST /management/quota/refresh[/:id])
+        if (path.startsWith("/management/quota/refresh")) {
+            return this.handleQuotaRefresh(req, path);
+        }
 
         // Management API
         const mgmtResponse = await this.management.handle(req);
@@ -185,6 +226,57 @@ export class ProxyServer {
     }
 
     // ─── Route Handlers ───────────────────────────────────────────────────
+
+    private async handleQuotaRefresh(req: Request, path: string): Promise<Response> {
+        if (req.method !== "POST") return this.json({ error: "Method not allowed" }, 405);
+        if (!this.management.isAuthorized(req)) return this.management.unauthorized();
+
+        const idMatch = path.match(/^\/management\/quota\/refresh\/(\d+)$/);
+        const targetId = idMatch?.[1] ? parseInt(idMatch[1]) : null;
+
+        const results: any[] = [];
+        const tokens = targetId
+            ? this.tokens.all().filter(t => t.id === targetId && t.active)
+            : this.tokens.getActive();
+
+        for (const token of tokens) {
+            try {
+                const resp = await fetch(`${this.settings.postman.base_url}/chat`, {
+                    method: "POST",
+                    headers: this.payload.headers(token.token),
+                    body: JSON.stringify(this.payload.refreshQuota()),
+                    signal: AbortSignal.timeout(15000),
+                });
+                if (!resp.ok) {
+                    results.push({ id: token.id, label: token.label, error: `HTTP ${resp.status}` });
+                    continue;
+                }
+                const result = await this.streamReader.read(resp.body!);
+                if (result.quota?.limit) {
+                    this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
+                    results.push({
+                        id: token.id,
+                        label: token.label,
+                        limit: result.quota.limit,
+                        usage: result.quota.usage,
+                        remaining: result.quota.limit - result.quota.usage,
+                        cycleEnd: result.quota.cycleEnd,
+                        state: result.quota.usageState,
+                    });
+                } else {
+                    results.push({ id: token.id, label: token.label, warning: "No quota data in response" });
+                }
+            } catch (e: any) {
+                results.push({ id: token.id, label: token.label, error: e.message });
+            }
+        }
+
+        if (results.length === 0) {
+            return this.json({ error: "No active tokens to refresh" }, 404);
+        }
+
+        return this.json({ refreshed: results.length, tokens: results });
+    }
 
     private handleHealth(): Response {
         return this.json({
@@ -409,7 +501,11 @@ export class ProxyServer {
         }
 
         this.tokens.recordRequest(token.id);
-        return this.streamReader.read(resp.body!);
+        const result = await this.streamReader.read(resp.body!);
+        if (result.quota?.limit) {
+          this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
+        }
+        return result;
     }
 
     private async streamText(writer: WritableStreamDefaultWriter<Uint8Array>, encoder: TextEncoder, text: string): Promise<void> {

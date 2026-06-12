@@ -72,6 +72,11 @@ export interface QuotaTokenStats {
   rateLimitCount: number;
   lastUsed: number | null;
   active: boolean;
+  limit: number;
+  usage: number;
+  cycleStart: string;
+  cycleEnd: string;
+  usageState: string;
 }
 
 export interface QuotaResponse {

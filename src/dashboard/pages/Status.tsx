@@ -1,7 +1,6 @@
 import React from "react";
 import { useStatus } from "../hooks/use-status";
 import { StatusCard, StatusCardSkeleton } from "../components/status-card";
-import { QuotaBar } from "../components/quota-bar";
 import { Button } from "../components/ui/button";
 import { RefreshCw } from "lucide-react";
 
@@ -39,9 +38,6 @@ export function Status() {
       ) : data ? (
         <StatusCard data={data} />
       ) : null}
-
-      {/* Quota usage bars */}
-      <QuotaBar />
     </div>
   );
 }

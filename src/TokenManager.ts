@@ -8,12 +8,26 @@ export interface QuotaStats {
   rateLimitCount: number;
   lastUsed: number | null;
   active: boolean;
+  limit: number;
+  usage: number;
+  cycleStart: string;
+  cycleEnd: string;
+  usageState: string;
 }
 
 export class TokenManager {
   private idx = 0;
   private readonly config: Config;
-  private readonly stats: Map<number, { requestCount: number; rateLimitCount: number; lastUsed: number | null }> = new Map();
+  private readonly stats: Map<number, {
+    requestCount: number;
+    rateLimitCount: number;
+    lastUsed: number | null;
+    limit: number;
+    usage: number;
+    cycleStart: string;
+    cycleEnd: string;
+    usageState: string;
+  }> = new Map();
 
   constructor(config: Config) {
     this.config = config;
@@ -70,7 +84,7 @@ export class TokenManager {
   recordRequest(tokenId: number): void {
     let s = this.stats.get(tokenId);
     if (!s) {
-      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null };
+      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null, limit: 0, usage: 0, cycleStart: "", cycleEnd: "", usageState: "AVAILABLE" };
       this.stats.set(tokenId, s);
     }
     s.requestCount++;
@@ -80,11 +94,24 @@ export class TokenManager {
   recordRateLimit(tokenId: number): void {
     let s = this.stats.get(tokenId);
     if (!s) {
-      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null };
+      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null, limit: 0, usage: 0, cycleStart: "", cycleEnd: "", usageState: "AVAILABLE" };
       this.stats.set(tokenId, s);
     }
     s.rateLimitCount++;
     s.lastUsed = Date.now();
+  }
+
+  recordQuota(tokenId: number, limit: number, usage: number, cycleStart: string, cycleEnd: string, usageState: string): void {
+    let s = this.stats.get(tokenId);
+    if (!s) {
+      s = { requestCount: 0, rateLimitCount: 0, lastUsed: null, limit: 0, usage: 0, cycleStart: "", cycleEnd: "", usageState: "AVAILABLE" };
+      this.stats.set(tokenId, s);
+    }
+    s.limit = limit;
+    s.usage = usage;
+    s.cycleStart = cycleStart;
+    s.cycleEnd = cycleEnd;
+    s.usageState = usageState;
   }
 
   getQuota(): QuotaStats[] {
@@ -98,6 +125,11 @@ export class TokenManager {
         rateLimitCount: s?.rateLimitCount ?? 0,
         lastUsed: s?.lastUsed ?? null,
         active: t.active,
+        limit: s?.limit ?? 0,
+        usage: s?.usage ?? 0,
+        cycleStart: s?.cycleStart ?? "",
+        cycleEnd: s?.cycleEnd ?? "",
+        usageState: s?.usageState ?? "AVAILABLE",
       };
     });
   }

@@ -7,16 +7,18 @@ import { Status } from "./pages/Status";
 import { Tokens } from "./pages/Tokens";
 import { Settings } from "./pages/Settings";
 import { Logs } from "./pages/Logs";
+import { Management } from "./pages/Management";
 import { SidebarNav } from "./components/sidebar-nav";
 import { Button } from "./components/ui/button";
 import { Menu } from "lucide-react";
 
 function getPage(hash: string): string {
   if (hash === "#/login") return "login";
-  if (hash === "#/dashboard" || hash === "" || hash === "#/") return "dashboard";
-  if (hash.startsWith("#/dashboard/tokens")) return "tokens";
-  if (hash.startsWith("#/dashboard/settings")) return "settings";
-  if (hash.startsWith("#/dashboard/logs")) return "logs";
+  if (hash === "#/management" || hash === "" || hash === "#/") return "dashboard";
+  if (hash.startsWith("#/management/quota")) return "management";
+  if (hash.startsWith("#/management/tokens")) return "tokens";
+  if (hash.startsWith("#/management/settings")) return "settings";
+  if (hash.startsWith("#/management/logs")) return "logs";
   return "dashboard";
 }
 
@@ -33,11 +35,12 @@ function App() {
   }, []);
 
   const navigateTo = (newPage: string) => {
-    let hash = "#/dashboard";
+    let hash = "#/management";
     if (newPage === "login") hash = "#/login";
-    else if (newPage === "tokens") hash = "#/dashboard/tokens";
-    else if (newPage === "settings") hash = "#/dashboard/settings";
-    else if (newPage === "logs") hash = "#/dashboard/logs";
+    else if (newPage === "management") hash = "#/management/quota";
+    else if (newPage === "tokens") hash = "#/management/tokens";
+    else if (newPage === "settings") hash = "#/management/settings";
+    else if (newPage === "logs") hash = "#/management/logs";
     window.location.hash = hash;
   };
 
@@ -93,6 +96,7 @@ function App() {
         </div>
         <div className="p-4 md:p-6">
           {page === "dashboard" && <Status />}
+          {page === "management" && <Management />}
           {page === "tokens" && <Tokens />}
           {page === "settings" && <Settings />}
           {page === "logs" && <Logs />}
