@@ -23,19 +23,7 @@ function getPage(hash: string): string {
 function App() {
   const [page, setPage] = useState(() => getPage(window.location.hash));
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // Wait for Zustand persist hydration
-  useEffect(() => {
-    const unsub = useAuthStore.persist.onFinishHydration(() => {
-      setHydrated(true);
-    });
-    if (useAuthStore.persist.hasHydrated()) {
-      setHydrated(true);
-    }
-    return unsub;
-  }, []);
 
   // Listen for hash changes
   useEffect(() => {
@@ -52,14 +40,6 @@ function App() {
     else if (newPage === "logs") hash = "#/dashboard/logs";
     window.location.hash = hash;
   };
-
-  if (!hydrated) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
 
   if (!isAuthenticated) {
     return (
