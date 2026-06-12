@@ -125,20 +125,24 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
-            binary: ohmyproxy
+            bun-target: bun-linux-x64
+            name: linux_amd64
+            ext: ''
+          - os: ubuntu-latest
+            bun-target: bun-linux-arm64
+            name: linux_aarch64
             ext: ''
           - os: windows-latest
-            target: windows-x64
-            binary: ohmyproxy
+            bun-target: bun-windows-x64
+            name: windows_amd64
             ext: '.exe'
           - os: macos-latest
-            target: macos-x64
-            binary: ohmyproxy
+            bun-target: bun-darwin-x64
+            name: darwin_amd64
             ext: ''
           - os: macos-latest
-            target: macos-arm64
-            binary: ohmyproxy
+            bun-target: bun-darwin-arm64
+            name: darwin_aarch64
             ext: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -158,14 +162,16 @@ jobs:
 
       - name: Compile binary
         run: |
-          bun build --compile --target=bun-${{ matrix.target }} ./index.ts --outfile ${{ matrix.binary }}${{ matrix.ext }}
+          bun build --compile --target=${{ matrix.bun-target }} ./index.ts --outfile ohmyproxy${{ matrix.ext }}
 
       - name: Package release
         shell: bash
         run: |
-          PLATFORM=${{ matrix.target }}
+          VERSION="${{ needs.build-assets.outputs.version }}"
+          VERSION="${VERSION#v}"
+          NAME="OhMyProxy_${VERSION}_${{ matrix.name }}"
           BINARY=ohmyproxy${{ matrix.ext }}
-          PKG_DIR=ohmyproxy-${PLATFORM}
+          PKG_DIR=${NAME}
 
           mkdir -p ${PKG_DIR}/src/dashboard/dist
           cp ${BINARY} ${PKG_DIR}/
@@ -174,15 +180,15 @@ jobs:
           cp src/dashboard/dist/app.js ${PKG_DIR}/src/dashboard/dist/
           cp settings.example.json ${PKG_DIR}/settings.json 2>/dev/null || echo '{"proxy":{"port":8020,"host":"127.0.0.1"},"api_keys":["change-me"],"postman":{},"logging":{"enabled":true,"level":"info"}}' > ${PKG_DIR}/settings.json
           echo '[]' > ${PKG_DIR}/list_access_token.json
-          echo "OhMyProxy ${PLATFORM}" > ${PKG_DIR}/README.txt
+          echo "OhMyProxy v${VERSION} - ${{ matrix.name }}" > ${PKG_DIR}/README.txt
           echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ohmyproxy-${PLATFORM}.zip ${PKG_DIR}/
-            echo "artifact=ohmyproxy-${PLATFORM}.zip" >> $GITHUB_ENV
+            7z a ${NAME}.zip ${PKG_DIR}/
+            echo "artifact=${NAME}.zip" >> $GITHUB_ENV
           else
-            tar czf ohmyproxy-${PLATFORM}.tar.gz ${PKG_DIR}/
-            echo "artifact=ohmyproxy-${PLATFORM}.tar.gz" >> $GITHUB_ENV
+            tar czf ${NAME}.tar.gz ${PKG_DIR}/
+            echo "artifact=${NAME}.tar.gz" >> $GITHUB_ENV
           fi
 
       - name: Upload binary artifact
@@ -237,10 +243,11 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | Linux x64 | `ohmyproxy-linux-x64.tar.gz` |
-            | Windows x64 | `ohmyproxy-windows-x64.zip` |
-            | macOS x64 | `ohmyproxy-macos-x64.tar.gz` |
-            | macOS ARM64 | `ohmyproxy-macos-arm64.tar.gz` |
+            | Linux x64 | `OhMyProxy_X.X.X_linux_amd64.tar.gz` |
+            | Linux ARM64 | `OhMyProxy_X.X.X_linux_aarch64.tar.gz` |
+            | macOS x64 | `OhMyProxy_X.X.X_darwin_amd64.tar.gz` |
+            | macOS ARM64 | `OhMyProxy_X.X.X_darwin_aarch64.tar.gz` |
+            | Windows x64 | `OhMyProxy_X.X.X_windows_amd64.zip` |
             | **Checksums** | `checksums.txt` |
 
             ## Quick Start
@@ -259,10 +266,8 @@ jobs:
             bun run index.ts
             ```
           files: |
-            artifacts/linux-x64/ohmyproxy-linux-x64.tar.gz
-            artifacts/windows-x64/ohmyproxy-windows-x64.zip
-            artifacts/macos-x64/ohmyproxy-macos-x64.tar.gz
-            artifacts/macos-arm64/ohmyproxy-macos-arm64.tar.gz
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
             artifacts/checksums.txt
           draft: false
           prerelease: false
