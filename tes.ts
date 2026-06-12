@@ -1,363 +1,224 @@
 /**
- * Postman OAuth Flow - Node.js Implementation
- * Mereplikasi alur autentikasi dari Postman Desktop App
+ * Postman OAuth v3 - Menggunakan chromiumapp.org sebagai redirect
+ *
+ * Cara kerja:
+ * 1. Pakai redirect_uri = https://erisedstraehruoytubecafruoytonwohsi.chromiumapp.org
+ * 2. Intercept DNS: arahkan chromiumapp.org ke 127.0.0.1
+ * 3. Jalankan HTTPS server lokal yang menangkap callback
  *
  * Cara pakai:
- *   node postman-oauth.js
- *
- * Dependencies:
- *   npm install express open
+ *   sudo node postman-oauth-v3.js
+ *   (perlu sudo untuk edit /etc/hosts dan bind port 443)
  */
 
-const http = require("http");
-const https = require("https");
-const url = require("url");
-const crypto = require("crypto");
-const { EventEmitter } = require("events");
+const https = require('https');
+const http = require('http');
+const crypto = require('crypto');
+const fs = require('fs');
+const { exec, execSync } = require('child_process');
 
-// ─── Konfigurasi (diambil dari source Postman) ────────────────────────────────
+const APP_ID = 'erisedstraehruoytubecafruoytonwohsi';
+const REDIRECT_HOST = `${APP_ID}.chromiumapp.org`;
+const REDIRECT_URI = `https://${REDIRECT_HOST}`;
 
-const CONFIG = {
-    identityURL: "https://identity.getpostman.com",
-    globalIdentityURL: "https://auth.postman.com",
-    appId: "erisedstraehruoytubecafruoytonwohsi",
+// ─── Self-signed cert untuk HTTPS lokal ──────────────────────────────────────
 
-    // Port lokal untuk menangkap callback
-    callbackPort: 10506,
-    callbackPath: "/auth/callback",
-
-    // Timeout menunggu user login (ms)
-    loginTimeout: 5 * 60 * 1000,
-};
-
-CONFIG.redirectUrl = `http://127.0.0.1:${CONFIG.callbackPort}${CONFIG.callbackPath}`;
-
-// ─── Event Bus sederhana (menggantikan pm.eventBus) ───────────────────────────
-
-class EventBus extends EventEmitter {
-    channel(name) {
+function generateSelfSignedCert() {
+    try {
+        execSync(`openssl req -x509 -newkey rsa:2048 -keyout /tmp/pm-key.pem \
+        -out /tmp/pm-cert.pem -days 1 -nodes \
+        -subj "/CN=${REDIRECT_HOST}" \
+        -addext "subjectAltName=DNS:${REDIRECT_HOST}" 2>/dev/null`);
         return {
-            publish: (event) => this.emit(name, event),
-            subscribe: (handler) => {
-                this.on(name, handler);
-                return () => this.off(name, handler); // unsubscribe function
-            },
+            key: fs.readFileSync('/tmp/pm-key.pem'),
+            cert: fs.readFileSync('/tmp/pm-cert.pem'),
         };
+    } catch(e) {
+        throw new Error('openssl tidak tersedia: ' + e.message);
     }
 }
 
-const eventBus = new EventBus();
+// ─── /etc/hosts manipulation ──────────────────────────────────────────────────
 
-// ─── Auth Service (menggantikan authService.js) ───────────────────────────────
+const HOSTS_ENTRY = `127.0.0.1 ${REDIRECT_HOST}`;
+const HOSTS_FILE = '/etc/hosts';
 
-const authService = {
-    getEventChannel() {
-        return eventBus.channel("auth-window-events");
-    },
-
-    send(data) {
-        this.getEventChannel().publish({
-            name: "response",
-            namespace: "auth-window",
-            data,
-        });
-    },
-
-    onResponse(handler) {
-        return this.getEventChannel().subscribe((event) => {
-            if (event.name === "response") handler(event.data);
-        });
-    },
-};
-
-// ─── URL Builder (mereplikasi logika di authService init) ─────────────────────
-
-function buildAuthUrl(options = {}) {
-    const {
-        isSignup = false,
-        email = null,
-        target = "login", // "login" | "signup" | "google" | "github" | "enterprise-login" | "switch-context"
-        userID = null,
-        expiredAccessToken = null,
-        newAccountRegionPreference = null,
-        extraParams = {},
-    } = options;
-
-    const params = {
-        app_id: CONFIG.appId,
-        redirect_uri: CONFIG.redirectUrl,
-        ...extraParams,
-    };
-
-    let baseUrl;
-
-    if (email && isSignup) {
-        // Signup dengan email
-        Object.assign(params, {
-            email,
-            __showRegionChooserIfNoneDetected: 1,
-            __region: newAccountRegionPreference,
-        });
-        baseUrl = `${CONFIG.globalIdentityURL}/__redirect/client/signup`;
-    } else if (email && !isSignup) {
-        // Re-login (token expired)
-        Object.assign(params, {
-            email,
-            reAuthenticate: "1",
-            user_id: userID,
-            expiredAccessToken,
-        });
-        baseUrl = `${CONFIG.identityURL}/client/login`;
-    } else if (
-        ["switch-context", "google", "enterprise-login", "github"].includes(target)
-    ) {
-        // OAuth provider eksternal
-        params.target = target;
-        baseUrl = `${CONFIG.identityURL}/client/browser-auth/init`;
-    } else {
-        // Login/signup biasa
-        Object.assign(params, {
-            __showRegionChooserIfNoneDetected: 1,
-            __region: newAccountRegionPreference,
-        });
-        baseUrl = `${CONFIG.globalIdentityURL}/__redirect${
-            isSignup ? "/client/signup" : "/client/login"
-        }`;
+function addHostsEntry() {
+    const current = fs.readFileSync(HOSTS_FILE, 'utf8');
+    if (current.includes(REDIRECT_HOST)) {
+        console.log('[HOSTS] Entry sudah ada');
+        return false;
     }
-
-    const query = new URLSearchParams(
-        Object.fromEntries(
-            Object.entries(params).filter(([, v]) => v != null && v !== "")
-        )
-    ).toString();
-
-    return `${baseUrl}?${query}`;
+    fs.appendFileSync(HOSTS_FILE, `\n${HOSTS_ENTRY}\n`);
+    console.log('[HOSTS] Entry ditambahkan:', HOSTS_ENTRY);
+    return true;
 }
 
-// ─── Callback Handler (menggantikan fungsi m() di source asli) ─────────────────
+function removeHostsEntry() {
+    const current = fs.readFileSync(HOSTS_FILE, 'utf8');
+    const updated = current.split('\n')
+    .filter(line => !line.includes(REDIRECT_HOST))
+    .join('\n');
+    fs.writeFileSync(HOSTS_FILE, updated);
+    console.log('[HOSTS] Entry dihapus');
+}
 
-function parseCallbackUrl(callbackUrl) {
-    const parsed = new URL(callbackUrl);
-    const n = Object.fromEntries(parsed.searchParams.entries());
+// ─── HTTPS Server lokal ───────────────────────────────────────────────────────
 
-    // Sama persis dengan struktur di source Postman
-    const userData = {
-        id: n.user_id,
-        teamId: n.team_id,
-        name: n.name,
-        email: n.email,
-        username: n.username,
-        locale: n.locale,
-        auth: {
-            access_token: n.access_token,
-            multi_login_token: n.multi_login_token,
-        },
-        region: n.region,
-    };
+function startHttpsServer(creds) {
+    return new Promise((resolve, reject) => {
+        const server = https.createServer(creds, (req, res) => {
+            const fullUrl = new URL(req.url, `https://${REDIRECT_HOST}`);
+            const params = Object.fromEntries(fullUrl.searchParams.entries());
 
-    let config = {};
-    if (n.config) {
-        try {
-            config = JSON.parse(n.config);
-        } catch (_) {}
-    }
+            console.log('\n[SERVER] Callback diterima!');
+            console.log('  Path  :', fullUrl.pathname);
+            console.log('  Params:', JSON.stringify(params, null, 4));
 
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+            <html><body style="font-family:system-ui;padding:2rem;text-align:center;background:#f0f2f5">
+            <div style="background:white;max-width:400px;margin:auto;padding:2rem;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1)">
+            <h2 style="color:#ff6c37">✓ Login Berhasil</h2>
+            <p style="color:#555">Token berhasil ditangkap. Silakan tutup tab ini.</p>
+            </div>
+            </body></html>
+            `);
+
+            if (params.access_token || params.user_id) {
+                server.close();
+                resolve(params);
+            }
+        });
+
+        server.on('error', (e) => {
+            if (e.code === 'EACCES') {
+                reject(new Error('Port 443 butuh sudo. Jalankan: sudo node postman-oauth-v3.js'));
+            } else {
+                reject(e);
+            }
+        });
+
+        server.listen(443, '127.0.0.1', () => {
+            console.log('[SERVER] HTTPS server aktif di https://127.0.0.1:443');
+        });
+
+        setTimeout(() => { server.close(); reject(new Error('Timeout 5 menit')); }, 5 * 60 * 1000);
+    });
+}
+
+// ─── Parse token dari callback ────────────────────────────────────────────────
+
+function parseToken(params) {
     return {
         success: true,
         cancel: false,
         error: null,
         authData: {
-            userData,
-            config,
-            additionalData: { action: n.action },
-            continueUrl: n.continueUrl,
+            userData: {
+                id:       params.user_id,
+                teamId:   params.team_id,
+                name:     params.name,
+                email:    params.email,
+                username: params.username,
+                locale:   params.locale,
+                region:   params.region,
+                auth: {
+                    access_token:      params.access_token,
+                    multi_login_token: params.multi_login_token,
+                },
+            },
+            config:         params.config ? JSON.parse(params.config) : {},
+            additionalData: { action: params.action },
+            continueUrl:    params.continueUrl,
         },
     };
 }
 
-// ─── Local HTTP Server (menggantikan webview + chromiumapp.org) ───────────────
-
-function startCallbackServer() {
-    return new Promise((resolve, reject) => {
-        const server = http.createServer((req, res) => {
-            const reqUrl = new URL(req.url, `http://127.0.0.1:${CONFIG.callbackPort}`);
-
-            if (reqUrl.pathname !== CONFIG.callbackPath) {
-                res.writeHead(404);
-                res.end("Not found");
-                return;
-            }
-
-            // Halaman HTML sukses (ditampilkan di browser user)
-            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            res.end(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <title>Postman - Login Berhasil</title>
-            <style>
-            body { font-family: system-ui; display: flex; align-items: center;
-                justify-content: center; height: 100vh; margin: 0;
-                background: #f0f2f5; }
-                .card { background: white; padding: 2rem 3rem; border-radius: 12px;
-                    text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.1); }
-                    h2 { color: #ff6c37; }
-                    p { color: #555; }
-                    </style>
-                    </head>
-                    <body>
-                    <div class="card">
-                    <h2>✓ Login Berhasil</h2>
-                    <p>Kamu sudah berhasil masuk. Halaman ini bisa ditutup.</p>
-                    </div>
-                    </body>
-                    </html>
-                    `);
-
-            // Kirim hasil ke aplikasi via event bus
-            const result = parseCallbackUrl(reqUrl.toString());
-            authService.send(result);
-
-            // Tutup server setelah menerima callback
-            server.close();
-            resolve(result);
-        });
-
-        server.on("error", reject);
-        server.listen(CONFIG.callbackPort, "127.0.0.1", () => {
-            console.log(
-                `[OAuth] Callback server aktif di http://127.0.0.1:${CONFIG.callbackPort}`
-            );
-        });
-
-        // Timeout otomatis
-        const timer = setTimeout(() => {
-            server.close();
-            reject(new Error("Login timeout: user tidak menyelesaikan login dalam 5 menit"));
-        }, CONFIG.loginTimeout);
-
-        server.on("close", () => clearTimeout(timer));
-    });
-}
-
-// ─── Buka Browser (menggantikan webview Electron) ─────────────────────────────
-
-async function openBrowser(targetUrl) {
-    // Coba gunakan 'open' package, fallback ke perintah OS
-    try {
-        const open = require("open");
-        await open(targetUrl);
-        return;
-    } catch (_) {}
-
-    // Fallback manual
-    const { exec } = require("child_process");
-    const platform = process.platform;
-    const cmd =
-    platform === "win32"
-    ? `start "" "${targetUrl}"`
-    : platform === "darwin"
-    ? `open "${targetUrl}"`
-    : `xdg-open "${targetUrl}"`;
-
-    exec(cmd, (err) => {
-        if (err) console.error("[OAuth] Gagal membuka browser:", err.message);
-    });
-}
-
-// ─── Fungsi Utama: login() ────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function login(options = {}) {
-    console.log("[OAuth] Memulai alur autentikasi Postman...");
+    const {
+        target = 'login',   // 'login' | 'google' | 'github' | 'enterprise-login'
+        isSignup = false,
+        email = null,
+    } = options;
 
-    // 1. Bangun URL autentikasi
-    const authUrl = buildAuthUrl(options);
-    console.log("[OAuth] URL autentikasi:", authUrl);
+    const authFlowId = crypto.randomUUID();
 
-    // 2. Mulai server callback di background
-    const callbackPromise = startCallbackServer();
-
-    // 3. Buka browser agar user login
-    await openBrowser(authUrl);
-    console.log("[OAuth] Browser dibuka. Menunggu user login...");
-
-    // 4. Tunggu callback
-    const result = await callbackPromise;
-
-    console.log("[OAuth] Login berhasil!");
-    console.log("[OAuth] User:", result.authData.userData.email);
-
-    return result;
-}
-
-// ─── Contoh penggunaan via Event Bus (seperti di source asli) ─────────────────
-
-function listenForAuthResult() {
-    const unsubscribe = authService.onResponse((data) => {
-        if (data.success && !data.cancel) {
-            console.log("\n[EventBus] Token diterima:");
-            console.log("  access_token :", data.authData.userData.auth.access_token);
-            console.log("  user_id      :", data.authData.userData.id);
-            console.log("  email        :", data.authData.userData.email);
-        } else if (data.cancel) {
-            console.log("[EventBus] User membatalkan login.");
-        } else {
-            console.log("[EventBus] Login gagal:", data.error);
-        }
-        unsubscribe();
+    // Build URL (sama seperti source Postman)
+    const params = new URLSearchParams({
+        app_id: APP_ID,
+        redirect_uri: REDIRECT_URI,
+        authFlowId,
     });
-}
 
-// ─── Cancel / Skip (tombol "Skip" di UI Postman) ──────────────────────────────
+    let baseUrl;
+    if (['google', 'github', 'enterprise-login', 'switch-context'].includes(target)) {
+        params.set('target', target);
+        baseUrl = 'https://identity.getpostman.com/client/browser-auth/init';
+    } else {
+        baseUrl = `https://auth.postman.com/__redirect/client/${isSignup ? 'signup' : 'login'}`;
+        if (email) params.set('email', email);
+    }
 
-function cancelLogin() {
-    authService.send({
-        success: true,
-        error: null,
-        cancel: true,
-        authData: { userData: { id: 0 } },
-    });
-    console.log("[OAuth] Login dibatalkan.");
-}
+    const loginUrl = `${baseUrl}?${params.toString()}`;
 
-// ─── Entry point ──────────────────────────────────────────────────────────────
+    console.log('='.repeat(60));
+    console.log('Postman OAuth v3');
+    console.log('='.repeat(60));
+    console.log('Target     :', target);
+    console.log('authFlowId :', authFlowId);
+    console.log('redirectUri:', REDIRECT_URI);
+    console.log('');
 
-async function main() {
-    // Daftarkan listener event bus (opsional, untuk demo)
-    listenForAuthResult();
-
+    // Setup
+    let hostsAdded = false;
     try {
-        // Login biasa
-        const result = await login({ target: "login" });
+        console.log('[SETUP] Membuat self-signed certificate...');
+        const creds = generateSelfSignedCert();
 
-        // Atau login dengan Google:
-        // const result = await login({ target: "google" });
+        console.log('[SETUP] Menambahkan hosts entry...');
+        hostsAdded = addHostsEntry();
 
-        // Atau login dengan GitHub:
-        // const result = await login({ target: "github" });
+        // Start server
+        const serverPromise = startHttpsServer(creds);
 
-        // Atau signup dengan email:
-        // const result = await login({ isSignup: true, email: "user@example.com" });
+        // Buka browser
+        console.log('\n[AUTH] Membuka browser...');
+        console.log('URL:', loginUrl);
+        const openCmd = process.platform === 'darwin' ? `open "${loginUrl}"`
+        : process.platform === 'win32'   ? `start "" "${loginUrl}"`
+        : `xdg-open "${loginUrl}"`;
+        exec(openCmd, () => {});
+
+        console.log('[WAIT] Menunggu callback...\n');
+        const params = await serverPromise;
+        const result = parseToken(params);
+
+        console.log('\n[SUCCESS] Login berhasil!');
+        console.log('Email      :', result.authData.userData.email);
+        console.log('User ID    :', result.authData.userData.id);
+        console.log('Token      :', result.authData.userData.auth.access_token?.slice(0, 20) + '...');
 
         return result;
-    } catch (err) {
-        console.error("[OAuth] Error:", err.message);
-        process.exit(1);
+
+    } finally {
+        if (hostsAdded) removeHostsEntry();
     }
 }
 
-// Jalankan jika dipanggil langsung
+// Jalankan
 if (require.main === module) {
-    main().then(() => process.exit(0));
+    login({ target: 'login' })
+    .then(r => {
+        console.log('\n[RESULT]', JSON.stringify(r, null, 2));
+        process.exit(0);
+    })
+    .catch(e => {
+        console.error('\n[ERROR]', e.message);
+        process.exit(1);
+    });
 }
 
-// Export untuk dipakai sebagai modul
-module.exports = {
-    login,
-    cancelLogin,
-    buildAuthUrl,
-    parseCallbackUrl,
-    authService,
-    eventBus,
-    CONFIG,
-};
+module.exports = { login, parseToken, buildAuthUrl: () => {} };
