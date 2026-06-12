@@ -12,17 +12,20 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Build dashboard assets once (shared across platforms)
+  build-assets:
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.check.outputs.exists }}
+      changelog: ${{ steps.changelog.outputs.body }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Get version
         id: version
@@ -55,35 +58,156 @@ jobs:
           echo "$LOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Build
+      - name: Build dashboard
         if: steps.check.outputs.exists == 'false'
         run: |
           bun install
-          bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css 2>/dev/null || true
+          bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css
           bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
 
-      - name: Create Release
+      - name: Upload dashboard assets
         if: steps.check.outputs.exists == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-assets
+          path: |
+            src/dashboard/index.html
+            src/dashboard/output.css
+            src/dashboard/dist/app.js
+          retention-days: 1
+
+  # Compile binaries for each platform
+  compile:
+    needs: build-assets
+    if: needs.build-assets.outputs.exists == 'false'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            binary: ohmyproxy
+            ext: ''
+          - os: windows-latest
+            target: windows-x64
+            binary: ohmyproxy
+            ext: '.exe'
+          - os: macos-latest
+            target: macos-x64
+            binary: ohmyproxy
+            ext: ''
+          - os: macos-latest
+            target: macos-arm64
+            binary: ohmyproxy
+            ext: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Download dashboard assets
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-assets
+          path: src/dashboard/
+
+      - name: Create dist dir
+        run: mkdir -p src/dashboard/dist
+
+      - name: Compile binary
+        run: |
+          bun build --compile --target=bun-${{ matrix.target }} ./index.ts --outfile ${{ matrix.binary }}${{ matrix.ext }}
+
+      - name: Package release
+        shell: bash
+        run: |
+          PLATFORM=${{ matrix.target }}
+          BINARY=ohmyproxy${{ matrix.ext }}
+          PKG_DIR=ohmyproxy-${PLATFORM}
+
+          mkdir -p ${PKG_DIR}/src/dashboard/dist
+          cp ${BINARY} ${PKG_DIR}/
+          cp src/dashboard/index.html ${PKG_DIR}/src/dashboard/
+          cp src/dashboard/output.css ${PKG_DIR}/src/dashboard/
+          cp src/dashboard/dist/app.js ${PKG_DIR}/src/dashboard/dist/
+          cp settings.example.json ${PKG_DIR}/settings.json 2>/dev/null || echo '{"proxy":{"port":8020,"host":"127.0.0.1"},"api_keys":["change-me"],"postman":{},"logging":{"enabled":true,"level":"info"}}' > ${PKG_DIR}/settings.json
+          echo '[]' > ${PKG_DIR}/list_access_token.json
+          echo "OhMyProxy ${PLATFORM}" > ${PKG_DIR}/README.txt
+          echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a ohmyproxy-${PLATFORM}.zip ${PKG_DIR}/
+            echo "artifact=ohmyproxy-${PLATFORM}.zip" >> $GITHUB_ENV
+          else
+            tar czf ohmyproxy-${PLATFORM}.tar.gz ${PKG_DIR}/
+            echo "artifact=ohmyproxy-${PLATFORM}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.artifact }}
+          retention-days: 1
+
+  # Create release with all binaries
+  release:
+    needs: [build-assets, compile]
+    if: needs.build-assets.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: List artifacts
+        run: find artifacts/ -type f
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.build-assets.outputs.version }}
+          name: Release ${{ needs.build-assets.outputs.version }}
           body: |
             ## Changes
             ```
-            ${{ steps.changelog.outputs.body }}
+            ${{ needs.build-assets.outputs.changelog }}
             ```
 
+            ## Download
+
+            | Platform | File |
+            |----------|------|
+            | Linux x64 | `ohmyproxy-linux-x64.tar.gz` |
+            | Windows x64 | `ohmyproxy-windows-x64.zip` |
+            | macOS x64 | `ohmyproxy-macos-x64.tar.gz` |
+            | macOS ARM64 | `ohmyproxy-macos-arm64.tar.gz` |
+
             ## Quick Start
+            1. Download for your platform
+            2. Extract: `tar xzf ohmyproxy-<platform>.tar.gz` or unzip
+            3. Edit `settings.json` with your API keys
+            4. Run: `./ohmyproxy`
+            5. Open http://127.0.0.1:8020/
+
+            ## From Source
             ```bash
             git clone https://github.com/SkyUniverse2640/OhMyProxy.git
-            cd OhMyProxy
-            git checkout ${{ steps.version.outputs.version }}
-            bun install
-            bun run build:css
+            cd OhMyProxy && git checkout ${{ needs.build-assets.outputs.version }}
+            bun install && bun run build:css
             bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
             bun run index.ts
             ```
+          files: |
+            artifacts/linux-x64/ohmyproxy-linux-x64.tar.gz
+            artifacts/windows-x64/ohmyproxy-windows-x64.zip
+            artifacts/macos-x64/ohmyproxy-macos-x64.tar.gz
+            artifacts/macos-arm64/ohmyproxy-macos-arm64.tar.gz
           draft: false
           prerelease: false
           generate_release_notes: true
