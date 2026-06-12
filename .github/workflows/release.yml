@@ -128,18 +128,10 @@ jobs:
             bun-target: bun-linux-x64
             platform: linux_amd64
             ext: ''
-          - os: ubuntu-latest
-            bun-target: bun-linux-arm64
-            platform: linux_aarch64
-            ext: ''
           - os: windows-latest
             bun-target: bun-windows-x64
             platform: windows_amd64
             ext: '.exe'
-          - os: macos-latest
-            bun-target: bun-darwin-x64
-            platform: darwin_amd64
-            ext: ''
           - os: macos-latest
             bun-target: bun-darwin-arm64
             platform: darwin_aarch64
@@ -243,12 +235,12 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | Linux x64 | `OhMyProxy_X.X.X_linux_amd64.tar.gz` |
-            | Linux ARM64 | `OhMyProxy_X.X.X_linux_aarch64.tar.gz` |
-            | macOS x64 | `OhMyProxy_X.X.X_darwin_amd64.tar.gz` |
-            | macOS ARM64 | `OhMyProxy_X.X.X_darwin_aarch64.tar.gz` |
-            | Windows x64 | `OhMyProxy_X.X.X_windows_amd64.zip` |
+            | Linux x64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_linux_amd64.tar.gz` |
+            | macOS ARM64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_darwin_aarch64.tar.gz` |
+            | Windows x64 | `OhMyProxy_${{ needs.build-assets.outputs.version }}_windows_amd64.zip` |
             | **Checksums** | `checksums.txt` |
+
+            > Note: Bun `--compile` only supports native compilation. Linux ARM64 and macOS x64 require native ARM64/x64 runners respectively (not available on GitHub Actions).
 
             ## Quick Start
             1. Download for your platform
