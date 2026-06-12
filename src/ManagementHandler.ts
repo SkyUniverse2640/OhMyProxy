@@ -7,7 +7,7 @@ import type { TokenManager } from "./TokenManager";
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, PATCH, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, X-Management-Key",
 };
 
 class RateLimiter {
@@ -53,10 +53,10 @@ export class ManagementHandler {
   // ─── Auth ──────────────────────────────────────────────────────────────
 
   isAuthorized(req: Request): boolean {
-    const auth = req.headers.get("authorization") ?? "";
-    const key = auth.replace(/^Bearer\s+/i, "").trim();
-    if (!key) return false;
-    return this.settings.api_keys.includes(key);
+    const key = req.headers.get("x-management-key") ?? "";
+    const expected = this.settings.management_key ?? "";
+    if (!expected) return false;
+    return key === expected;
   }
 
   unauthorized(): Response {
@@ -139,7 +139,8 @@ export class ManagementHandler {
   private getSettings(): Response {
     const s = { ...this.settings };
     // Redact sensitive fields
-    s.api_keys = s.api_keys.map(() => "***");
+    delete (s as any).management_key;
+    s.secret_keys = s.secret_keys.map(() => "***");
     return this.json(s);
   }
 

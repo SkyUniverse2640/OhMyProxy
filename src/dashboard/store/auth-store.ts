@@ -1,26 +1,26 @@
 import { create } from "zustand";
 
 interface AuthState {
-  apiKey: string;
+  managementKey: string;
   isAuthenticated: boolean;
-  setCredentials: (apiKey: string) => void;
+  setCredentials: (managementKey: string) => void;
   login: () => Promise<boolean>;
   logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
-  apiKey: "",
+  managementKey: "",
   isAuthenticated: false,
 
-  setCredentials: (apiKey: string) => {
-    set({ apiKey });
+  setCredentials: (managementKey: string) => {
+    set({ managementKey });
   },
 
   login: async () => {
-    const { apiKey } = get();
+    const { managementKey } = get();
     try {
       const res = await fetch("/management/status", {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { "X-Management-Key": managementKey },
       });
       if (res.ok) {
         set({ isAuthenticated: true });
@@ -36,6 +36,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   logout: () => {
-    set({ isAuthenticated: false, apiKey: "" });
+    set({ isAuthenticated: false, managementKey: "" });
   },
 }));

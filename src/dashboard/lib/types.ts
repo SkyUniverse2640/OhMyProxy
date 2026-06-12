@@ -20,7 +20,7 @@ export interface ProxySettings {
     host: string;
     port: number;
   };
-  api_keys: string[];
+  secret_keys: string[];
   postman: {
     base_url: string;
     app_version: string;
