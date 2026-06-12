@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, unlinkSync } from "fs";
 import { join, resolve, dirname, basename, relative } from "path";
+import { isIP } from "node:net";
+import { promises as dns } from "node:dns";
 
 const BASH_TIMEOUT_MS = 120_000; // 2 minutes
 
@@ -12,8 +14,14 @@ export class ToolExecutor {
 
   private resolvePath(p: string): string {
     if (!p || p === "" || p === ".") return this.cwd;
-    if (p.match(/^[A-Za-z]:[\\\/]/) || p.startsWith("/")) return p;
-    return resolve(this.cwd, p);
+    const resolved = p.match(/^[A-Za-z]:[\\\/]/) || p.startsWith("/")
+      ? resolve(p)
+      : resolve(this.cwd, p);
+    // Prevent path traversal outside cwd
+    if (!resolved.startsWith(this.cwd + "/") && resolved !== this.cwd) {
+      throw new Error(`Path outside workspace: ${p}`);
+    }
+    return resolved;
   }
 
   async execute(name: string, args: any): Promise<any> {
@@ -41,8 +49,8 @@ export class ToolExecutor {
         default:
           return { error: `Unknown tool: ${name}`, note: "Not implemented in proxy" };
       }
-    } catch (e: any) {
-      return { error: e.message, status: "ERROR" };
+    } catch {
+      return { error: "Tool execution failed", status: "ERROR" };
     }
   }
 
@@ -51,6 +59,23 @@ export class ToolExecutor {
   private bash(args: any): any {
     const command = args.command ?? args.cmd ?? "";
     if (!command) return { error: "No command provided" };
+
+    // Block obviously dangerous commands (denylist)
+    const DANGEROUS_PATTERNS = [
+      /\brm\s+-rf\s+\//,
+      /\bdd\s+if=/,
+      /\bmkfs\./,
+      /\b:\(\)\s*\{/,   // fork bomb
+      />\s*\/dev\/sda/,
+      /\bchmod\s+.*777/,
+      /\bcurl.*\|\s*(ba)?sh/,
+      /\bwget.*\|\s*(ba)?sh/,
+    ];
+    for (const pattern of DANGEROUS_PATTERNS) {
+      if (pattern.test(command)) {
+        return { error: "Command blocked: potentially destructive operation", status: "ERROR" };
+      }
+    }
 
     const workdir = args.workdir ?? args.cwd ?? this.cwd;
     const timeoutMs = args.timeout ?? BASH_TIMEOUT_MS;
@@ -73,8 +98,8 @@ export class ToolExecutor {
         exitCode: proc.exitCode,
         status: proc.exitCode === 0 ? "SUCCESS" : "ERROR",
       };
-    } catch (e: any) {
-      return { error: e.message, status: "ERROR" };
+    } catch {
+      return { error: "Tool execution failed", status: "ERROR" };
     }
   }
 
@@ -248,11 +273,66 @@ export class ToolExecutor {
 
   // ─── WebFetch ──────────────────────────────────────────────────────────
 
+  private isPrivateIP(ip: string): boolean {
+    if (isIP(ip) === 0) return false;
+    // IPv4 private/loopback/link-local/reserved
+    if (ip === "0.0.0.0") return true;
+    if (ip.startsWith("10.")) return true;
+    if (ip.startsWith("172.")) {
+      const second = parseInt(ip.split(".")[1] ?? "0");
+      if (second >= 16 && second <= 31) return true;
+    }
+    if (ip.startsWith("192.168.")) return true;
+    if (ip.startsWith("127.")) return true;
+    if (ip.startsWith("169.254.")) return true;
+    if (ip.startsWith("224.") || ip.startsWith("239.")) return true;
+    // IPv6 local/loopback/link-local/ULA
+    if (ip === "::1" || ip === "::" || ip.startsWith("fe80:") ||
+        (ip.startsWith("fc") || ip.startsWith("fd"))) return true;
+    return false;
+  }
+
+  private async validateFetchURL(urlStr: string): Promise<string | null> {
+    try {
+      const parsed = new URL(urlStr);
+      const hostname = parsed.hostname;
+      if (isIP(hostname) && this.isPrivateIP(hostname)) {
+        return `Blocked: private/reserved IP address: ${hostname}`;
+      }
+      const ips: string[] = [];
+      try {
+        const resolved4 = await dns.resolve4(hostname);
+        ips.push(...resolved4);
+      } catch {}
+      try {
+        const resolved6 = await dns.resolve6(hostname);
+        ips.push(...resolved6);
+      } catch {}
+      if (ips.length === 0 && !isIP(hostname)) {
+        return `Blocked: could not resolve hostname: ${hostname}`;
+      }
+      for (const ip of ips) {
+        if (this.isPrivateIP(ip)) {
+          return `Blocked: hostname ${hostname} resolves to private IP: ${ip}`;
+        }
+      }
+      return null;
+    } catch {
+      return `Blocked: invalid URL: ${urlStr}`;
+    }
+  }
+
   private async webFetch(args: any): Promise<any> {
     const url = args.url ?? args.urlToFetch ?? "";
     if (!url) return { error: "No URL provided" };
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
       return { error: "URL must start with http:// or https://" };
+    }
+
+    // SSRF protection: block private/reserved IPs
+    const blockReason = await this.validateFetchURL(url);
+    if (blockReason) {
+      return { error: blockReason, status: "ERROR" };
     }
 
     try {

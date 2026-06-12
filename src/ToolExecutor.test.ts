@@ -127,7 +127,8 @@ test("edit: replace_all", async () => {
 test("glob: find files by pattern", async () => {
   const result = await exec(TMP).execute("glob", { pattern: ".txt" });
   expect(result.results).toContain("hello.txt");
-  expect(result.results).toContain("config.json");
+  // All results must match the .txt pattern
+  expect(result.results.every((r: string) => r.includes(".txt"))).toBe(true);
   expect(result.total).toBeGreaterThanOrEqual(2);
 });
 

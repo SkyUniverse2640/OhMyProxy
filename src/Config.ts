@@ -1,11 +1,13 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync, createHash } from "node:crypto";
 import type { Settings, AccessToken } from "./types";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96-bit IV for GCM
-const KEY_HASH = "sha256";
+const PBKDF2_ITERATIONS = 600_000;
+const PBKDF2_KEYLEN = 32; // 256 bits
+const SALT_LENGTH = 16; // 128-bit salt
 
 export class Config {
   private readonly dir: string;
@@ -26,6 +28,23 @@ export class Config {
       this.createDefaultSettings(path);
     }
     this._settingsCache = JSON.parse(readFileSync(path, "utf-8")) as Settings;
+
+    // Warn about default credentials on every load
+    const s = this._settingsCache;
+    const hasDefaultSecret = s.secret_keys.some(k => k === "change-me");
+    const hasDefaultMgmt = s.management_key === "change-me";
+    if (hasDefaultSecret || hasDefaultMgmt) {
+      console.error(
+        "\n" +
+        "  ╔══════════════════════════════════════════════════════════════╗\n" +
+        "  ║  SECURITY WARNING: Default credentials detected!            ║\n" +
+        "  ║  Edit settings.json and change:                             ║\n" +
+        (hasDefaultSecret ? "  ║  - secret_keys: \"change-me\" → set a strong random value      ║\n" : "") +
+        (hasDefaultMgmt ? "  ║  - management_key: \"change-me\" → set a strong random value   ║\n" : "") +
+        "  ╚══════════════════════════════════════════════════════════════╝\n"
+      );
+    }
+
     return this._settingsCache;
   }
 
@@ -64,15 +83,24 @@ export class Config {
 
   // ─── Encryption ──────────────────────────────────────────────────────────
 
-  private getEncryptionKey(): Buffer {
+  private getEncryptionKey(salt?: Buffer): { key: Buffer; salt: Buffer } {
     const settings = this.loadSettings();
-    const key = (settings.management_key ?? "change-me").slice(0, 128);
-    return createHash(KEY_HASH).update(key).digest(); // 32 bytes
+    const passphrase = (settings.management_key ?? "change-me").slice(0, 128);
+    const actualSalt = salt ?? randomBytes(SALT_LENGTH);
+    const key = pbkdf2Sync(passphrase, actualSalt, PBKDF2_ITERATIONS, PBKDF2_KEYLEN, "sha512");
+    return { key, salt: actualSalt };
+  }
+
+  // Legacy key derivation (SHA256) for backward-compatible decryption
+  private getLegacyEncryptionKey(): Buffer {
+    const settings = this.loadSettings();
+    const passphrase = (settings.management_key ?? "change-me").slice(0, 128);
+    return createHash("sha256").update(passphrase).digest();
   }
 
   private encryptTokens(tokens: AccessToken[]): string {
     try {
-      const key = this.getEncryptionKey();
+      const { key, salt } = this.getEncryptionKey();
       const iv = randomBytes(IV_LENGTH);
       const cipher = createCipheriv(ALGORITHM, key, iv);
       const plaintext = JSON.stringify(tokens);
@@ -83,39 +111,44 @@ export class Config {
       ]);
       const authTag = cipher.getAuthTag();
 
-      // Format: base64(iv):base64(authTag):base64(ciphertext)
+      // Format: base64(salt):base64(iv):base64(authTag):base64(ciphertext)
       return [
+        salt.toString("base64"),
         iv.toString("base64"),
         authTag.toString("base64"),
         encrypted.toString("base64"),
       ].join(":");
     } catch (e: any) {
-      console.error(`[config] Encryption failed: ${e.message}. Saving as plaintext.`);
-      // Fallback: save as plaintext inside the new format
-      return `PLAINTEXT:${Buffer.from(JSON.stringify(tokens)).toString("base64")}`;
+      console.error("[config] Token encryption failed — tokens not saved.");
+      throw new Error("Failed to encrypt tokens");
     }
   }
 
   private decryptTokens(payload: string): AccessToken[] {
-    // Plaintext fallback within encrypted format
-    if (payload.startsWith("PLAINTEXT:")) {
-      try {
-        return JSON.parse(Buffer.from(payload.slice(11), "base64").toString("utf-8"));
-      } catch {
-        return [];
-      }
-    }
-
     try {
-      const key = this.getEncryptionKey();
       const parts = payload.split(":");
-      if (parts.length !== 3) {
+      // Support both legacy 3-part and new 4-part format
+      let key: Buffer;
+      let iv: Buffer;
+      let authTag: Buffer;
+      let ciphertext: Buffer;
+
+      if (parts.length === 4) {
+        // New format: salt:iv:authTag:ciphertext
+        const salt = Buffer.from(parts[0]!, "base64");
+        iv = Buffer.from(parts[1]!, "base64");
+        authTag = Buffer.from(parts[2]!, "base64");
+        ciphertext = Buffer.from(parts[3]!, "base64");
+        key = this.getEncryptionKey(salt).key;
+      } else if (parts.length === 3) {
+        // Legacy format: iv:authTag:ciphertext (no salt, SHA256 key derivation)
+        iv = Buffer.from(parts[0]!, "base64");
+        authTag = Buffer.from(parts[1]!, "base64");
+        ciphertext = Buffer.from(parts[2]!, "base64");
+        key = this.getLegacyEncryptionKey();
+      } else {
         throw new Error("Invalid encrypted payload format");
       }
-
-      const iv = Buffer.from(parts[0]!, "base64");
-      const authTag = Buffer.from(parts[1]!, "base64");
-      const ciphertext = Buffer.from(parts[2]!, "base64");
 
       const decipher = createDecipheriv(ALGORITHM, key, iv);
       decipher.setAuthTag(authTag);
@@ -126,17 +159,18 @@ export class Config {
       ]);
 
       return JSON.parse(decrypted.toString("utf-8")) as AccessToken[];
-    } catch (e: any) {
-      console.error(`[config] Decryption failed: ${e.message}. Returning empty token list.`);
+    } catch {
+      console.error("[config] Token decryption failed — returning empty token list.");
       return [];
     }
   }
 
   private createDefaultSettings(path: string): void {
+    const mgmtKey = randomBytes(32).toString("hex");
     const defaults: Settings = {
       proxy: { port: 8020, host: "127.0.0.1" },
       secret_keys: ["change-me"],
-      management_key: "change-me",
+      management_key: mgmtKey,
       postman: {
         base_url: "https://gateway.postman.com",
         app_version: "12.14.0",
@@ -152,6 +186,8 @@ export class Config {
       logging: { enabled: true, level: "info" },
     };
     writeFileSync(path, JSON.stringify(defaults, null, 2));
-    console.log(`[config] Created default settings.json — edit this file to configure the proxy`);
+    console.log(`[config] Created default settings.json`);
+    console.log(`[config] Management key: ${mgmtKey}`);
+    console.log(`[config] Edit settings.json to configure secret_keys and other options`);
   }
 }
