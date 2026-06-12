@@ -13,11 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
 import type { TokenItem } from "@/lib/types";
 import { AddTokenDialog } from "@/components/add-token-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 
 interface TokenTableProps {
   tokens: TokenItem[];
@@ -29,6 +30,7 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [toggling, setToggling] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<TokenItem | null>(null);
 
   const handleToggle = async (id: number) => {
     setToggling((prev) => new Set(prev).add(id));
@@ -47,11 +49,13 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
     setDeleting((prev) => new Set(prev).add(id));
     try {
       await apiClient.deleteToken(id);
-      toast.success("Token deleted");
+      toast.success(`Token "${deleteTarget.label}" deleted`);
       onRefresh();
     } catch (err: any) {
       toast.error(err.message || "Failed to delete token");
@@ -61,6 +65,7 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
         next.delete(id);
         return next;
       });
+      setDeleteTarget(null);
     }
   };
 
@@ -74,10 +79,16 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
         <p className="text-sm text-muted-foreground">
           {tokens.length} token{tokens.length !== 1 ? "s" : ""}
         </p>
-        <Button size="sm" onClick={() => setDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Token
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onRefresh}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Token
+          </Button>
+        </div>
       </div>
 
       {tokens.length === 0 ? (
@@ -124,7 +135,7 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDelete(token.id)}
+                      onClick={() => setDeleteTarget(token)}
                       disabled={deleting.has(token.id)}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -142,6 +153,16 @@ export function TokenTable({ tokens, loading, onRefresh }: TokenTableProps) {
         onOpenChange={setDialogOpen}
         onSuccess={onRefresh}
       />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="Delete Token"
+        description={`Are you sure you want to delete token "${deleteTarget?.label}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        loading={deleteTarget ? deleting.has(deleteTarget.id) : false}
+        onConfirm={handleDeleteConfirm}
+      />
     </>
   );
 }
@@ -151,7 +172,10 @@ function TokenTableSkeleton() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <Skeleton className="h-5 w-20" />
-        <Skeleton className="h-9 w-28" />
+        <div className="flex gap-2">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-28" />
+        </div>
       </div>
       <div className="rounded-md border">
         <Table>

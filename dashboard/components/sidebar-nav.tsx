@@ -10,6 +10,7 @@ import {
   ScrollText,
   Shield,
   LogOut,
+  X,
 } from "lucide-react";
 import { useAuthStore } from "@/store/auth-store";
 import { Button } from "@/components/ui/button";
@@ -21,17 +22,40 @@ const navItems = [
   { href: "/dashboard/logs", label: "Logs", icon: ScrollText },
 ];
 
-export function SidebarNav() {
+interface SidebarNavProps {
+  onClose?: () => void;
+}
+
+export function SidebarNav({ onClose }: SidebarNavProps) {
   const pathname = usePathname();
   const logout = useAuthStore((s) => s.logout);
 
+  const handleNav = () => {
+    // Close mobile sidebar after navigation
+    if (onClose) onClose();
+  };
+
   return (
     <aside className="flex h-full w-64 flex-col border-r bg-card">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <Shield className="h-5 w-5 text-primary" />
-        <span className="font-semibold">OhMyProxy</span>
+      {/* Header */}
+      <div className="flex h-14 items-center justify-between border-b px-4">
+        <div className="flex items-center gap-2">
+          <Shield className="h-5 w-5 text-primary" />
+          <span className="font-semibold">OhMyProxy</span>
+        </div>
+        {onClose && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
+      {/* Nav items */}
       <nav className="flex-1 space-y-1 p-3">
         {navItems.map((item) => {
           const isActive =
@@ -40,6 +64,7 @@ export function SidebarNav() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={handleNav}
               className={cn(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                 isActive
@@ -54,6 +79,7 @@ export function SidebarNav() {
         })}
       </nav>
 
+      {/* Logout */}
       <div className="border-t p-3">
         <Button
           variant="ghost"
