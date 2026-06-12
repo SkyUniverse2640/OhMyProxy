@@ -163,7 +163,7 @@ export class ProxyServer {
         if (mgmtResponse) return mgmtResponse;
 
         // Dashboard static files (CSS, JS, TSX, TS)
-        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/health")) {
             if (path === "/output.css") {
                 return this.serveStatic("src/dashboard/output.css", "text/css");
             }
@@ -177,7 +177,7 @@ export class ProxyServer {
         }
 
         // Dashboard SPA fallback (non-API GET requests → index.html)
-        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/management") && !path.startsWith("/health") && !path.includes(".")) {
             return this.serveDashboard();
         }
 
