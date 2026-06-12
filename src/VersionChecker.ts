@@ -74,10 +74,8 @@ export class VersionChecker {
 
   private getCurrentVersion(): string {
     try {
-      const { version } = JSON.parse(
-        require("fs").readFileSync(require("path").join(import.meta.dir, "..", "package.json"), "utf-8")
-      );
-      return version || "0.0.0";
+      const { VERSION } = require("./version");
+      return VERSION || "0.0.0";
     } catch {
       return "0.0.0";
     }
