@@ -4,3 +4,4 @@ bun.lock
 .claude
 .next/
 package-lock.json
+settings.json
