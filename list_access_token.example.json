@@ -1,0 +1,10 @@
+[
+  {
+    "id": 1,
+    "label": "Example Token",
+    "token": "YOUR_POSTMAN_ACCESS_TOKEN",
+    "workspace_id": "",
+    "active": true,
+    "note": "Add your Postman access tokens here"
+  }
+]
