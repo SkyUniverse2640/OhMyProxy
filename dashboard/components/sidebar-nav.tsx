@@ -16,9 +16,9 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/tokens", label: "Tokens", icon: Key },
-  { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/logs", label: "Logs", icon: ScrollText },
+  { href: "/dashboard/tokens", label: "Tokens", icon: Key },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard/logs", label: "Logs", icon: ScrollText },
 ];
 
 export function SidebarNav() {
