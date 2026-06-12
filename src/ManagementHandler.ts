@@ -49,6 +49,7 @@ export class ManagementHandler {
     if (!this.isAuthorized(req)) return this.unauthorized();
 
     if (path === "/management/status" && method === "GET") return this.getStatus();
+    if (path === "/management/quota" && method === "GET") return this.getQuota();
     if (path === "/management/settings" && method === "GET") return this.getSettings();
     if (path === "/management/settings" && method === "PATCH") return this.patchSettings(req);
     if (path === "/management/tokens" && method === "GET") return this.getTokens();
@@ -66,6 +67,16 @@ export class ManagementHandler {
   }
 
   // ─── Handlers ──────────────────────────────────────────────────────────
+
+  private getQuota(): Response {
+    return this.json({
+      tokens: this.tokens.getQuota(),
+      total: {
+        requests: this.tokens.getQuota().reduce((s, q) => s + q.requestCount, 0),
+        rateLimits: this.tokens.getQuota().reduce((s, q) => s + q.rateLimitCount, 0),
+      },
+    });
+  }
 
   private getStatus(): Response {
     const active = this.tokens.getActive();
@@ -110,6 +121,7 @@ export class ManagementHandler {
     // Persist
     const settingsPath = join(this.config.getDir(), "settings.json");
     writeFileSync(settingsPath, JSON.stringify(current, null, 2));
+    this.config.invalidateSettings();
     this.settings = current;
 
     return this.json({ message: "Settings updated", updated: Object.keys(body).filter(k => ALLOWED_FIELDS.includes(k as any)) });

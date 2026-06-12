@@ -1,4 +1,6 @@
 import type { Settings, AccessToken, AnthropicRequest, PostmanToolResponse, PostmanStreamResult } from './types';
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Config } from './Config';
 import { Logger } from './Logger';
 import { TokenManager } from './TokenManager';
@@ -38,9 +40,10 @@ export class ProxyServer {
         const activeCount = this.tokens.getActive().length;
 
         console.log(`
-      SkyUniverse ProxyAPI - https://${host}:${port}
+      SkyUniverse ProxyAPI - http://${host}:${port}
       Model AI      : ${model.padEnd(44)}
       Access Token  :  ${String(activeCount).padEnd(44)}
+      Dashboard     :  http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/
       ===============================================
       Go To .claude/settings.json to Setup the Proxy
 `);
@@ -58,7 +61,7 @@ export class ProxyServer {
 
         if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-        if (path === '/' || path === '/health') return this.handleHealth();
+        if (path === '/health') return this.handleHealth();
         if (path === '/tokens') return this.handleTokens(req, method);
         if (path.match(/^\/tokens\/\d+$/)) return this.handleTokenById(path, method);
         if (path.match(/^\/tokens\/\d+\/toggle$/)) return this.handleTokenToggle(path, method);
@@ -69,11 +72,116 @@ export class ProxyServer {
         const mgmtResponse = await this.management.handle(req);
         if (mgmtResponse) return mgmtResponse;
 
+        // Dashboard static files (CSS, JS, TSX, TS)
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health")) {
+            if (path === "/output.css") {
+                return this.serveStatic("src/dashboard/output.css", "text/css");
+            }
+            if (path === "/dist/app.js") {
+                return this.serveStatic("src/dashboard/dist/app.js", "application/javascript");
+            }
+            const ext = path.split(".").pop() || "";
+            if (["tsx", "ts", "js", "jsx", "css", "svg", "png", "ico"].includes(ext)) {
+                return this.serveDashboardFile(path);
+            }
+        }
+
+        // Dashboard SPA fallback (non-API GET requests → index.html)
+        if (method === "GET" && !path.startsWith("/v1/") && !path.startsWith("/tokens") && !path.startsWith("/management") && !path.startsWith("/oauth/") && !path.startsWith("/health") && !path.includes(".")) {
+            return this.serveDashboard();
+        }
+
         if (path !== '/v1/messages' || method !== 'POST') {
             return this.json({ error: `Route tidak ditemukan: ${method} ${path}` }, 404);
         }
 
         return this.handleMessages(req, reqId);
+    }
+
+    // ─── Dashboard Serving ──────────────────────────────────────────────
+
+    private serveDashboard(): Response {
+        const html = readFileSync(join(import.meta.dir, "..", "src", "dashboard", "index.html"), "utf-8");
+        return new Response(html, {
+            headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        });
+    }
+
+    private serveStatic(relPath: string, contentType: string): Response {
+        try {
+            const fullPath = join(import.meta.dir, "..", relPath);
+            const content = readFileSync(fullPath, "utf-8");
+            return new Response(content, {
+                headers: {
+                    "Content-Type": `${contentType}; charset=utf-8`,
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                },
+            });
+        } catch {
+            return new Response("Not found", { status: 404 });
+        }
+    }
+
+    private serveDashboardFile(path: string): Response {
+        const relPath = join(import.meta.dir, "..", "src", "dashboard", path.replace(/^\//, ""));
+        const file = Bun.file(relPath);
+
+        if (!file.size) {
+            return new Response("Not found", { status: 404 });
+        }
+
+        const ext = path.split(".").pop() || "";
+        const mimeTypes: Record<string, string> = {
+            tsx: "text/javascript",
+            ts: "text/javascript",
+            js: "application/javascript",
+            jsx: "application/javascript",
+            css: "text/css",
+            svg: "image/svg+xml",
+            png: "image/png",
+            ico: "image/x-icon",
+        };
+
+        const contentType = mimeTypes[ext] || "application/octet-stream";
+
+        // Transpile TSX/TS to JS for browser consumption
+        if (ext === "tsx" || ext === "ts" || ext === "jsx") {
+            try {
+                const source = readFileSync(relPath, "utf-8");
+                // Use Bun's built-in transpiler to convert TSX → JS
+                const transpiler = new Bun.Transpiler({
+                    loader: ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : "ts",
+                    target: "browser",
+                });
+                const transpiled = transpiler.transformSync(source);
+                return new Response(transpiled, {
+                    headers: {
+                        "Content-Type": "text/javascript; charset=utf-8",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                    },
+                });
+            } catch {
+                // Fallback: serve raw (browser will likely fail parsing, but at least shows the error)
+                return new Response(file, {
+                    headers: {
+                        "Content-Type": "text/javascript; charset=utf-8",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                    },
+                });
+            }
+        }
+
+        return new Response(file, {
+            headers: {
+                "Content-Type": contentType,
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            },
+        });
     }
 
     // ─── Route Handlers ───────────────────────────────────────────────────
@@ -112,13 +220,13 @@ export class ProxyServer {
 
     private handleTokenById(path: string, method: string): Response {
         if (method !== 'DELETE') return this.json({ error: 'Method not allowed' }, 405);
-        const id = parseInt(path.split('/')[2]);
+        const id = parseInt(path.split('/')[2] ?? '');
         return this.tokens.remove(id) ? this.json({ message: `Token #${id} dihapus` }) : this.json({ error: 'Tidak ditemukan' }, 404);
     }
 
     private handleTokenToggle(path: string, method: string): Response {
         if (method !== 'PATCH') return this.json({ error: 'Method not allowed' }, 405);
-        const id = parseInt(path.split('/')[2]);
+        const id = parseInt(path.split('/')[2] ?? '');
         const t = this.tokens.toggle(id);
         return t ? this.json({ message: `Token #${id} ${t.active ? 'aktif' : 'nonaktif'}` }) : this.json({ error: 'Tidak ditemukan' }, 404);
     }
@@ -216,7 +324,7 @@ export class ProxyServer {
                     args = JSON.parse(tc.function.arguments);
                 } catch {}
 
-                const toolResult = executor.execute(tc.function.name, args);
+                const toolResult = await executor.execute(tc.function.name, args);
                 const isSuccess = toolResult?.status === 'SUCCESS' || !toolResult?.error;
                 const summary = ToolExecutor.summarize(tc.function.name, args, toolResult);
 
@@ -273,6 +381,7 @@ export class ProxyServer {
             this.logger.log('error', `[${reqId}] ❌ Postman ${resp.status}: ${errText.slice(0, 200)}`);
 
             if (resp.status === 429 && retryCount < MAX_RETRIES) {
+                this.tokens.recordRateLimit(token.id);
                 const retryAfter = resp.headers.get('Retry-After');
                 const waitMs = retryAfter ? parseFloat(retryAfter) * 1000 : 2 ** retryCount * 1000;
                 this.logger.log('warn', `[${reqId}] ⏳ Rate limited. Retry ${retryCount + 1}/${MAX_RETRIES} in ${waitMs}ms`);
@@ -299,6 +408,7 @@ export class ProxyServer {
             };
         }
 
+        this.tokens.recordRequest(token.id);
         return this.streamReader.read(resp.body!);
     }
 
@@ -319,7 +429,7 @@ export class ProxyServer {
         const auth = req.headers.get('authorization') ?? '';
         const xkey = req.headers.get('x-api-key') ?? '';
         const sk = auth.replace(/^Bearer\s+/i, '').trim() || xkey.trim();
-        return this.settings.secret_keys.includes(sk);
+        return this.config.loadSettings().secret_keys.includes(sk);
     }
 
     private resolveCwd(req: Request, sysText: string): string {
@@ -334,8 +444,8 @@ export class ProxyServer {
 
     private extractLastUserMessage(body: AnthropicRequest): string {
         for (let i = body.messages.length - 1; i >= 0; i--) {
-            if (body.messages[i].role === 'user') {
-                return this.extractText(body.messages[i].content);
+            if (body.messages[i]?.role === 'user') {
+                return this.extractText(body.messages[i]?.content ?? '');
             }
         }
         return '';

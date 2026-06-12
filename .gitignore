@@ -1,6 +1,10 @@
 node_modules
-bun.lock
 .omc
 .claude
 .next/
 package-lock.json
+settings.json
+list_access_token.json
+src/dashboard/dist/
+src/dashboard/output.css
+proxy.log
