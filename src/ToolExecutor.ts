@@ -16,7 +16,7 @@ export class ToolExecutor {
     return resolve(this.cwd, p);
   }
 
-  execute(name: string, args: any): any {
+  async execute(name: string, args: any): Promise<any> {
     try {
       switch (name) {
         case "bash":
@@ -34,6 +34,10 @@ export class ToolExecutor {
         case "editFile":         return this.edit(args);
         case "createDirectory":  return this.createDirectory(args);
         case "deleteFile":       return this.deleteFile(args);
+        case "webSearch":
+        case "web_search":       return this.webSearch(args);
+        case "webFetch":
+        case "web_fetch":        return this.webFetch(args);
         default:
           return { error: `Unknown tool: ${name}`, note: "Not implemented in proxy" };
       }
@@ -162,6 +166,135 @@ export class ToolExecutor {
     };
   }
 
+  // ─── WebSearch ─────────────────────────────────────────────────────────
+
+  private async webSearch(args: any): Promise<any> {
+    const query = args.query ?? args.searchTerm ?? "";
+    if (!query) return { error: "No search query provided" };
+
+    const allowedDomains = args.allowedDomains ?? args.allowed_domains ?? [];
+    const blockedDomains = args.blockedDomains ?? args.blocked_domains ?? [];
+    const maxResults = args.maxResults ?? args.limit ?? 10;
+
+    // Build a DuckDuckGo Lite search URL (no API key needed)
+    const ddgQuery = encodeURIComponent(query);
+    const url = `https://lite.duckduckgo.com/lite/?q=${ddgQuery}`;
+
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "OhMyProxy/1.0" },
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!resp.ok) {
+        return { error: `Search failed: HTTP ${resp.status}`, status: "ERROR" };
+      }
+
+      const html = await resp.text();
+      const results = this.parseDuckDuckGoResults(html, maxResults);
+
+      // Filter by allowed/blocked domains
+      let filtered = results;
+      if (allowedDomains.length > 0) {
+        filtered = filtered.filter((r) =>
+          allowedDomains.some((d: string) => r.url.includes(d))
+        );
+      }
+      if (blockedDomains.length > 0) {
+        filtered = filtered.filter(
+          (r) => !blockedDomains.some((d: string) => r.url.includes(d))
+        );
+      }
+
+      return {
+        query,
+        results: filtered.slice(0, maxResults),
+        total: filtered.length,
+        status: "SUCCESS",
+      };
+    } catch (e: any) {
+      return { error: `Search error: ${e.message}`, status: "ERROR" };
+    }
+  }
+
+  private parseDuckDuckGoResults(html: string, max: number): Array<{ title: string; url: string; snippet: string }> {
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    // DDG Lite returns results in <a> tags with class="result-link" and snippets in <td class="result-snippet">
+    const linkRegex = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</gi;
+    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([^<]*)</gi;
+
+    const links: Array<{ url: string; title: string }> = [];
+    let match;
+    while ((match = linkRegex.exec(html)) !== null && links.length < max) {
+      const url = match[1] ?? "";
+      const title = match[2]?.trim() ?? "";
+      if (url && title && !url.includes("duckduckgo.com")) {
+        links.push({ url, title });
+      }
+    }
+
+    const snippets: string[] = [];
+    while ((match = snippetRegex.exec(html)) !== null && snippets.length < max) {
+      const snippet = match[1]?.trim() ?? "";
+      if (snippet) snippets.push(snippet);
+    }
+
+    for (let i = 0; i < Math.min(links.length, snippets.length); i++) {
+      results.push({ ...links[i]!, snippet: snippets[i]! });
+    }
+
+    return results;
+  }
+
+  // ─── WebFetch ──────────────────────────────────────────────────────────
+
+  private async webFetch(args: any): Promise<any> {
+    const url = args.url ?? args.urlToFetch ?? "";
+    if (!url) return { error: "No URL provided" };
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      return { error: "URL must start with http:// or https://" };
+    }
+
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "OhMyProxy/1.0" },
+        signal: AbortSignal.timeout(20_000),
+      });
+
+      if (!resp.ok) {
+        return { error: `Fetch failed: HTTP ${resp.status}`, status: "ERROR" };
+      }
+
+      const contentType = resp.headers.get("content-type") ?? "";
+      const maxLen = args.maxLength ?? args.max_length ?? 50_000;
+
+      if (contentType.includes("application/json")) {
+        const json = await resp.json();
+        return { url, content: JSON.stringify(json).slice(0, maxLen), contentType, status: "SUCCESS" };
+      }
+
+      const text = await resp.text();
+      // Strip HTML tags for readability
+      const stripped = contentType.includes("text/html")
+        ? text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s{2,}/g, "\n")
+            .trim()
+        : text;
+
+      return {
+        url,
+        content: stripped.slice(0, maxLen),
+        contentType,
+        originalLength: text.length,
+        status: "SUCCESS",
+      };
+    } catch (e: any) {
+      return { error: `Fetch error: ${e.message}`, status: "ERROR" };
+    }
+  }
+
   // ─── Helpers ───────────────────────────────────────────────────────────
 
   private walkFiles(dir: string, pattern: string, fn: (fp: string) => boolean): void {
@@ -268,6 +401,10 @@ export class ToolExecutor {
       searchFiles:      `Search: ${args.pattern ?? args.query ?? ""}`,
       grep:             `Grep: ${args.pattern ?? ""}`,
       glob:             `Glob: ${args.pattern ?? ""}`,
+      webSearch:        `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
+      web_search:       `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
+      webFetch:         `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
+      web_fetch:        `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
     };
     return summaries[name] ?? `${name} completed`;
   }

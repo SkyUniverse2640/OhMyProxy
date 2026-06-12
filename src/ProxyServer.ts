@@ -307,7 +307,7 @@ export class ProxyServer {
                     args = JSON.parse(tc.function.arguments);
                 } catch {}
 
-                const toolResult = executor.execute(tc.function.name, args);
+                const toolResult = await executor.execute(tc.function.name, args);
                 const isSuccess = toolResult?.status === 'SUCCESS' || !toolResult?.error;
                 const summary = ToolExecutor.summarize(tc.function.name, args, toolResult);
 
