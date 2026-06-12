@@ -9,6 +9,10 @@ export class Config {
     this.dir = dir;
   }
 
+  getDir(): string {
+    return this.dir;
+  }
+
   loadSettings(): Settings {
     return JSON.parse(readFileSync(join(this.dir, "settings.json"), "utf-8"));
   }

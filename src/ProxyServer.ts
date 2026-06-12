@@ -5,6 +5,7 @@ import { TokenManager } from "./TokenManager";
 import { ToolExecutor } from "./ToolExecutor";
 import { PayloadBuilder } from "./PayloadBuilder";
 import { StreamReader } from "./StreamReader";
+import { ManagementHandler } from "./ManagementHandler";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -20,13 +21,15 @@ export class ProxyServer {
   private readonly tokens: TokenManager;
   private readonly payload: PayloadBuilder;
   private readonly streamReader: StreamReader;
+  private readonly management: ManagementHandler;
 
   constructor(private readonly config: Config) {
     this.settings = config.loadSettings();
-    this.logger = new Logger(this.settings);
+    this.logger = new Logger(this.settings, config.getDir());
     this.tokens = new TokenManager(config);
     this.payload = new PayloadBuilder(this.settings);
     this.streamReader = new StreamReader();
+    this.management = new ManagementHandler(config, this.tokens);
   }
 
   start(): void {
@@ -61,6 +64,10 @@ export class ProxyServer {
     if (path.match(/^\/tokens\/\d+\/toggle$/)) return this.handleTokenToggle(path, method);
     if (path === "/v1/context" && method === "DELETE") return this.json({ message: "Context cleared (proxy is stateless)" });
     if (path === "/v1/models") return this.json({ data: [{ id: this.settings.postman.model, object: "model", created: 0, owned_by: "postman" }] });
+
+    // Management API
+    const mgmtResponse = await this.management.handle(req);
+    if (mgmtResponse) return mgmtResponse;
 
     if (path !== "/v1/messages" || method !== "POST") {
       return this.json({ error: `Route tidak ditemukan: ${method} ${path}` }, 404);
