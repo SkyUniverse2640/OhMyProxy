@@ -112,7 +112,8 @@ jobs:
           path: src/dashboard/
 
       - name: Create dist dir
-        run: mkdir -p src/dashboard/dist
+        shell: bash
+        run: mkdir -p src/dashboard/dist 2>/dev/null; true
 
       - name: Compile binary
         run: |
