@@ -125,8 +125,9 @@ export class ProxyServer {
 
     private serveStatic(relPath: string, contentType: string): Response {
         try {
-            const file = Bun.file(join(import.meta.dir, "..", relPath));
-            return new Response(file, {
+            const fullPath = join(import.meta.dir, "..", relPath);
+            const content = readFileSync(fullPath);
+            return new Response(content, {
                 headers: {
                     "Content-Type": contentType,
                     "Cache-Control": "no-cache, no-store, must-revalidate",
