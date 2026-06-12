@@ -10,8 +10,38 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type, X-Management-Key",
 };
 
+class RateLimiter {
+  private windows = new Map<string, { count: number; resetAt: number }>();
+
+  constructor(private maxRequests: number, private windowMs: number) {}
+
+  check(key: string): boolean {
+    const now = Date.now();
+    let w = this.windows.get(key);
+    if (!w || now >= w.resetAt) {
+      w = { count: 0, resetAt: now + this.windowMs };
+      this.windows.set(key, w);
+    }
+    w.count++;
+    // Periodic cleanup
+    if (this.windows.size > 10_000) {
+      for (const [k, v] of this.windows) {
+        if (now >= v.resetAt) this.windows.delete(k);
+      }
+    }
+    return w.count <= this.maxRequests;
+  }
+
+  getClientIp(req: Request): string {
+    return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+      ?? req.headers.get("x-real-ip")
+      ?? "127.0.0.1";
+  }
+}
+
 export class ManagementHandler {
   private settings: Settings;
+  private readonly authLimiter = new RateLimiter(5, 60_000); // 5 auth attempts per minute per IP
 
   constructor(
     private readonly config: Config,
@@ -31,7 +61,7 @@ export class ManagementHandler {
 
   unauthorized(): Response {
     return new Response(
-      JSON.stringify({ error: "Invalid or missing X-Management-Key" }),
+      JSON.stringify({ error: "Unauthorized" }),
       { status: 401, headers: { "Content-Type": "application/json", ...CORS } },
     );
   }
@@ -46,9 +76,20 @@ export class ManagementHandler {
     if (!path.startsWith("/management")) return null;
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
-    if (!this.isAuthorized(req)) return this.unauthorized();
+    if (!this.isAuthorized(req)) {
+      // Rate-limit failed auth to prevent brute-force
+      const ip = this.authLimiter.getClientIp(req);
+      if (!this.authLimiter.check(ip)) {
+        return new Response(
+          JSON.stringify({ error: "Too many authentication attempts. Please wait." }),
+          { status: 429, headers: { "Content-Type": "application/json", ...CORS, "Retry-After": "60" } },
+        );
+      }
+      return this.unauthorized();
+    }
 
     if (path === "/management/status" && method === "GET") return this.getStatus();
+    if (path === "/management/quota" && method === "GET") return this.getQuota();
     if (path === "/management/settings" && method === "GET") return this.getSettings();
     if (path === "/management/settings" && method === "PATCH") return this.patchSettings(req);
     if (path === "/management/tokens" && method === "GET") return this.getTokens();
@@ -66,6 +107,16 @@ export class ManagementHandler {
   }
 
   // ─── Handlers ──────────────────────────────────────────────────────────
+
+  private getQuota(): Response {
+    return this.json({
+      tokens: this.tokens.getQuota(),
+      total: {
+        requests: this.tokens.getQuota().reduce((s, q) => s + q.requestCount, 0),
+        rateLimits: this.tokens.getQuota().reduce((s, q) => s + q.rateLimitCount, 0),
+      },
+    });
+  }
 
   private getStatus(): Response {
     const active = this.tokens.getActive();
@@ -98,12 +149,22 @@ export class ManagementHandler {
     try { body = await req.json() as Record<string, any>; }
     catch { return this.json({ error: "Body bukan JSON valid" }, 400); }
 
-    const ALLOWED_FIELDS = ["logging", "postman"] as const;
+    const ALLOWED_FIELDS = ["logging"] as const;
+    const ALLOWED_POSTMAN_FIELDS = ["model", "platform", "file_viewer_path", "app_version", "user_id", "team_id", "workspace_id", "workspace_name", "ui_build"] as const;
     const current = this.config.loadSettings();
 
     for (const field of ALLOWED_FIELDS) {
       if (field in body) {
         (current as any)[field] = { ...(current as any)[field], ...(body as any)[field] };
+      }
+    }
+
+    // Whitelist specific postman fields — never allow base_url to change
+    if ("postman" in body && typeof body.postman === "object") {
+      for (const field of ALLOWED_POSTMAN_FIELDS) {
+        if (field in body.postman) {
+          (current.postman as any)[field] = body.postman[field];
+        }
       }
     }
 
@@ -113,7 +174,11 @@ export class ManagementHandler {
     this.config.invalidateSettings();
     this.settings = current;
 
-    return this.json({ message: "Settings updated", updated: Object.keys(body).filter(k => ALLOWED_FIELDS.includes(k as any)) });
+    const updatedTop = Object.keys(body).filter(k => ALLOWED_FIELDS.includes(k as any));
+    const updatedPostman = (body.postman && typeof body.postman === "object")
+      ? Object.keys(body.postman).filter(k => ALLOWED_POSTMAN_FIELDS.includes(k as any)).map(k => `postman.${k}`)
+      : [];
+    return this.json({ message: "Settings updated", updated: [...updatedTop, ...updatedPostman] });
   }
 
   private getTokens(): Response {
@@ -130,7 +195,10 @@ export class ManagementHandler {
     try { body = await req.json(); }
     catch { return this.json({ error: "Body bukan JSON valid" }, 400); }
 
-    if (!body?.token) return this.json({ error: "Field 'token' wajib" }, 400);
+    if (!body?.token) return this.json({ error: "Field 'token' is required" }, 400);
+    if (typeof body.token !== "string" || body.token.length > 4096) return this.json({ error: "Token must be a string with max 4096 characters" }, 400);
+    if (body.label && (typeof body.label !== "string" || body.label.length > 256)) return this.json({ error: "Label must be a string with max 256 characters" }, 400);
+    if (body.note && (typeof body.note !== "string" || body.note.length > 1024)) return this.json({ error: "Note must be a string with max 1024 characters" }, 400);
 
     const t = this.tokens.add({
       label: body.label ?? `Token ${Date.now()}`,

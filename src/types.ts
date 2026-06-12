@@ -8,7 +8,6 @@ export interface UiBuild {
 export interface Settings {
   proxy: { port: number; host: string };
   management_key?: string;
-  oauth?: OAuthConfig;
   secret_keys: string[];
   postman: {
     base_url: string;
@@ -23,14 +22,6 @@ export interface Settings {
     ui_build: UiBuild;
   };
   logging: { enabled: boolean; level: string };
-}
-
-export interface OAuthConfig {
-  postman: {
-    client_id: string;
-    client_secret: string;
-    redirect_uri: string;
-  };
 }
 
 export interface AccessToken {
@@ -63,11 +54,20 @@ export interface PostmanToolResponse {
   toolResponseStatus: "SUCCESS" | "ERROR";
 }
 
+export interface PostmanQuota {
+  limit: number;
+  usage: number;
+  cycleStart: string;
+  cycleEnd: string;
+  usageState: string;
+}
+
 export interface PostmanStreamResult {
   text: string;
   toolCalls: ToolCall[];
   conversationId: string;
   done: boolean;
+  quota?: PostmanQuota;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
