@@ -12,17 +12,19 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  # Version, changelog, bump, build dashboard assets
+  prepare:
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.body }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
-
-      # ─── Version & Changelog ──────────────────────────────────────────
 
       - name: Auto version
         id: version
@@ -42,19 +44,18 @@ jobs:
           elif [ -n "$COMMITS" ]; then
             PATCH=$((PATCH + 1)); BUMP="patch"
           else
-            echo "No commits to release"; echo "skip=true" >> $GITHUB_OUTPUT; exit 0
+            echo "No commits"; echo "skip=true" >> $GITHUB_OUTPUT; exit 0
           fi
           NEXT="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=v${NEXT}" >> $GITHUB_OUTPUT
-          echo "bump=${BUMP}" >> $GITHUB_OUTPUT
           echo "Auto version: v${CURRENT} → v${NEXT} (${BUMP})"
 
-      - name: Check if release exists
+      - name: Check release exists
         id: check
         run: |
           if gh release view "${{ steps.version.outputs.version }}" &>/dev/null; then
-            echo "skip compiling, release already exists"
-            exit 0
+            echo "Release already exists, skipping"
+            exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,22 +73,15 @@ jobs:
           echo "$LOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Bump version in package.json
+      - name: Bump version
         run: |
-          NEXT_VERSION="${{ steps.version.outputs.version }}"
-          NEXT_VERSION="${NEXT_VERSION#v}"
-          node -e "
-            const pkg = require('./package.json');
-            pkg.version = '${NEXT_VERSION}';
-            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
+          V="${{ steps.version.outputs.version }}"; V="${V#v}"
+          node -e "const p=require('./package.json');p.version='${V}';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
-          git commit -m "chore: bump version to ${NEXT_VERSION} [skip ci]" || true
+          git commit -m "chore: bump to ${V} [skip ci]" || true
           git push origin main || true
-
-      # ─── Build Dashboard ──────────────────────────────────────────────
 
       - name: Build dashboard
         run: |
@@ -95,25 +89,55 @@ jobs:
           bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css
           bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
 
-      # ─── Compile All Platforms (Bun cross-compiles from x64) ──────────
+      - name: Upload dashboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: |
+            src/dashboard/index.html
+            src/dashboard/output.css
+            src/dashboard/dist/app.js
+          retention-days: 1
 
-      - name: Compile & package all platforms
+  # Compile on native OS (cross-compile within same OS family for arch variants)
+  compile:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: "bun-linux-x64|linux_amd64|,bun-linux-arm64|linux_aarch64|"
+          - os: macos-latest
+            targets: "bun-darwin-arm64|darwin_aarch64|,bun-darwin-x64|darwin_amd64|"
+          - os: windows-latest
+            targets: "bun-windows-x64|windows_amd64|.exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Download dashboard
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard
+          path: src/dashboard/
+
+      - name: Create dist dir
+        shell: bash
+        run: mkdir -p src/dashboard/dist 2>/dev/null; true
+
+      - name: Compile & package
+        shell: bash
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
           VERSION="${VERSION#v}"
-
-          # Define targets: bun-target|platform|ext
-          TARGETS=(
-            "bun-linux-x64|linux_amd64|"
-            "bun-linux-arm64|linux_aarch64|"
-            "bun-windows-x64|windows_amd64|.exe"
-            "bun-darwin-x64|darwin_amd64|"
-            "bun-darwin-arm64|darwin_aarch64|"
-          )
+          IFS=',' read -ra TARGETS <<< "${{ matrix.targets }}"
 
           mkdir -p dist
 
           for entry in "${TARGETS[@]}"; do
+            [ -z "$entry" ] && continue
             IFS='|' read -r BUN_TARGET PLATFORM EXT <<< "$entry"
             BINARY="ohmyproxy${EXT}"
             NAME="OhMyProxy_${VERSION}_${PLATFORM}"
@@ -135,8 +159,7 @@ jobs:
             echo "Run: ./${BINARY}" >> ${PKG_DIR}/README.txt
 
             if [[ "${PLATFORM}" == windows_* ]]; then
-              sudo apt-get install -y p7zip-full 2>/dev/null || true
-              7z a ${NAME}.zip ${PKG_DIR}/
+              7z a ${NAME}.zip ${PKG_DIR}/ >/dev/null
               ARTIFACT="${NAME}.zip"
             else
               tar czf ${NAME}.tar.gz ${PKG_DIR}/
@@ -145,48 +168,61 @@ jobs:
 
             mkdir -p dist/${PLATFORM}
             mv ${ARTIFACT} dist/${PLATFORM}/
-            # Cleanup for next platform
             rm -rf ${PKG_DIR} ${BINARY}
             echo "::endgroup::"
           done
 
-          # Generate checksums
-          cd dist
-          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; \
-            | sed 's|^\./||' \
-            | sed 's|^[^/]*/||' \
-            | sort > checksums.txt
-          cat checksums.txt
-          cd ..
-
-      - name: Upload all artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-files
+          name: bins-${{ matrix.os }}
           path: dist/
+          retention-days: 1
 
-      # ─── Create GitHub Release ────────────────────────────────────────
+  # Create release with all binaries + checksums
+  release:
+    needs: [prepare, compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bins-*
+          path: dist/
+          merge-multiple: true
+
+      - name: List & checksums
+        run: |
+          find dist/ -type f -ls
+          cd dist
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec sha256sum {} \; \
+            | sed 's|^\./||;s|^[^/]*/||' \
+            | sort > checksums.txt
+          mv checksums.txt dist/checksums.txt 2>/dev/null || true
+          cat checksums.txt 2>/dev/null || cat dist/checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: Release ${{ needs.prepare.outputs.version }}
           body: |
             ## Changes
             ```
-            ${{ steps.changelog.outputs.body }}
+            ${{ needs.prepare.outputs.changelog }}
             ```
 
             ## Download
 
             | Platform | File |
             |----------|------|
-            | Linux x64 | `OhMyProxy_${{ steps.version.outputs.version }}_linux_amd64.tar.gz` |
-            | Linux ARM64 | `OhMyProxy_${{ steps.version.outputs.version }}_linux_aarch64.tar.gz` |
-            | macOS x64 | `OhMyProxy_${{ steps.version.outputs.version }}_darwin_amd64.tar.gz` |
-            | macOS ARM64 | `OhMyProxy_${{ steps.version.outputs.version }}_darwin_aarch64.tar.gz` |
-            | Windows x64 | `OhMyProxy_${{ steps.version.outputs.version }}_windows_amd64.zip` |
+            | Linux x64 | `OhMyProxy_${{ needs.prepare.outputs.version }}_linux_amd64.tar.gz` |
+            | Linux ARM64 | `OhMyProxy_${{ needs.prepare.outputs.version }}_linux_aarch64.tar.gz` |
+            | macOS x64 | `OhMyProxy_${{ needs.prepare.outputs.version }}_darwin_amd64.tar.gz` |
+            | macOS ARM64 | `OhMyProxy_${{ needs.prepare.outputs.version }}_darwin_aarch64.tar.gz` |
+            | Windows x64 | `OhMyProxy_${{ needs.prepare.outputs.version }}_windows_amd64.zip` |
             | **Checksums** | `checksums.txt` |
 
             ## Quick Start
@@ -199,7 +235,7 @@ jobs:
             ## From Source
             ```bash
             git clone https://github.com/SkyUniverse2640/OhMyProxy.git
-            cd OhMyProxy && git checkout ${{ steps.version.outputs.version }}
+            cd OhMyProxy && git checkout ${{ needs.prepare.outputs.version }}
             bun install && bun run build:css
             bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist/ --target browser
             bun run index.ts
