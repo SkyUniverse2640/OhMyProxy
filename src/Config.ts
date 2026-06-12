@@ -9,6 +9,7 @@ const KEY_HASH = "sha256";
 
 export class Config {
   private readonly dir: string;
+  private _settingsCache: Settings | null = null;
 
   constructor(dir: string) {
     this.dir = dir;
@@ -19,11 +20,17 @@ export class Config {
   }
 
   loadSettings(): Settings {
+    if (this._settingsCache) return this._settingsCache;
     const path = join(this.dir, "settings.json");
     if (!existsSync(path)) {
       this.createDefaultSettings(path);
     }
-    return JSON.parse(readFileSync(path, "utf-8"));
+    this._settingsCache = JSON.parse(readFileSync(path, "utf-8")) as Settings;
+    return this._settingsCache;
+  }
+
+  invalidateSettings(): void {
+    this._settingsCache = null;
   }
 
   loadTokens(): AccessToken[] {

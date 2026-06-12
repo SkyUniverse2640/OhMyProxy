@@ -410,7 +410,7 @@ export class ProxyServer {
         const auth = req.headers.get('authorization') ?? '';
         const xkey = req.headers.get('x-api-key') ?? '';
         const sk = auth.replace(/^Bearer\s+/i, '').trim() || xkey.trim();
-        return this.settings.secret_keys.includes(sk);
+        return this.config.loadSettings().secret_keys.includes(sk);
     }
 
     private resolveCwd(req: Request, sysText: string): string {

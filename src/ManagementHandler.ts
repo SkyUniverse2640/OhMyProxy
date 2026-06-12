@@ -110,6 +110,7 @@ export class ManagementHandler {
     // Persist
     const settingsPath = join(this.config.getDir(), "settings.json");
     writeFileSync(settingsPath, JSON.stringify(current, null, 2));
+    this.config.invalidateSettings();
     this.settings = current;
 
     return this.json({ message: "Settings updated", updated: Object.keys(body).filter(k => ALLOWED_FIELDS.includes(k as any)) });
