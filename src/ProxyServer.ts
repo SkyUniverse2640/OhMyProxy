@@ -164,7 +164,12 @@ export class ProxyServer {
             }
         }
 
-        return new Response(file, { headers: { "Content-Type": contentType } });
+        return new Response(file, {
+            headers: {
+                "Content-Type": contentType,
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            },
+        });
     }
 
     // ─── Route Handlers ───────────────────────────────────────────────────
