@@ -27,11 +27,36 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Get version
+      - name: Auto version
         id: version
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          # Get current version
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Analyze commits since last tag for bump type
+          LAST_TAG=$(git tag --sort=-v:refname | head -1 || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --oneline --no-merges)
+          else
+            COMMITS=$(git log --oneline --no-merges "${LAST_TAG}..HEAD")
+          fi
+
+          # Determine bump: BREAKING/major > feat/minor > fix/patch
+          if echo "$COMMITS" | grep -qiE '(BREAKING[ -]CHANGE|feat!|refactor!|fix!|^[a-z]+![:\(])'; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0; BUMP="major"
+          elif echo "$COMMITS" | grep -qiE '^[a-z0-9]+ feat[:\(]'; then
+            MINOR=$((MINOR + 1)); PATCH=0; BUMP="minor"
+          elif [ -n "$COMMITS" ]; then
+            PATCH=$((PATCH + 1)); BUMP="patch"
+          else
+            echo "No commits to release"; echo "exists=true" >> $GITHUB_OUTPUT; exit 0
+          fi
+
+          NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=v${NEXT}" >> $GITHUB_OUTPUT
+          echo "bump=${BUMP}" >> $GITHUB_OUTPUT
+          echo "Auto version: v${CURRENT} → v${NEXT} (${BUMP})"
 
       - name: Check if release exists
         id: check
@@ -57,6 +82,22 @@ jobs:
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$LOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Bump version in package.json
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          NEXT_VERSION="${{ steps.version.outputs.version }}"
+          NEXT_VERSION="${NEXT_VERSION#v}"
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = '${NEXT_VERSION}';
+            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${NEXT_VERSION} [skip ci]" || true
+          git push origin main || true
 
       - name: Build dashboard
         if: steps.check.outputs.exists == 'false'
