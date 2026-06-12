@@ -9,7 +9,7 @@
     "dev": "bun --watch index.ts",
     "build:css": "bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css",
     "build:css:min": "bunx tailwindcss -i ./src/dashboard/index.css -o ./src/dashboard/output.css --minify",
-    "build:dashboard": "bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist --target=browser --minify",
+    "build:dashboard": "bun build ./src/dashboard/app.tsx --outdir=./src/dashboard/dist --target=browser --minify --format=iife",
     "prestart": "bun run build:dashboard && bun run build:css",
     "predev": "bun run build:dashboard && bun run build:css",
     "test": "bun test",
