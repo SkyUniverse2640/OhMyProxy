@@ -1,14 +1,47 @@
 import { existsSync, readdirSync } from "fs";
 import type { Settings, PostmanToolResponse } from "./types";
 
+/** Map Node.js process.platform → Postman platform string */
+function detectPlatform(): string {
+  switch (process.platform) {
+    case "linux":  return "DESKTOP_LINUX";
+    case "darwin": return "DESKTOP_MACOS";
+    default:       return "DESKTOP_WINDOWS";
+  }
+}
+
+/** Map Node.js process.platform → Postman hash platform segment */
+function detectHashPlatform(): string {
+  switch (process.platform) {
+    case "linux":  return "linux";
+    case "darwin": return "mac";
+    default:       return "win32";
+  }
+}
+
+/** Map Node.js process.platform → Electron user-agent OS string */
+function detectUAOs(): string {
+  switch (process.platform) {
+    case "linux":  return "X11; Linux x86_64";
+    case "darwin": return "Macintosh; Intel Mac OS X 10_15_7";
+    default:       return "Windows NT 10.0; Win64; x64";
+  }
+}
+
 export class PayloadBuilder {
   private readonly settings: Settings;
+  private readonly platform: string;
+  private readonly hashPlatform: string;
+  private readonly uaOs: string;
 
   constructor(settings: Settings) {
     this.settings = settings;
+    this.platform     = detectPlatform();
+    this.hashPlatform = detectHashPlatform();
+    this.uaOs         = detectUAOs();
   }
 
-  userQuery(query: string, cwd: string, workspaceId: string, conversationId?: string): any {
+  userQuery(query: string, cwd: string, workspaceId: string, conversationId?: string, selectedContext: any[] = []): any {
     const { clientTools, clientKBTerms } = this.buildClientTools();
     return {
       input: {
@@ -21,11 +54,11 @@ export class PayloadBuilder {
         product: "workspace_v12",
         startedFrom: "CHAT_INPUT",
       },
-      platform: "DESKTOP_WINDOWS",
+      platform: this.platform,
       clientTools,
       clientKBTerms,
       mandatoryContext: { workspaceId },
-      selectedContext: [],
+      selectedContext,
       backgroundContext: this.buildBackgroundContext(cwd, workspaceId),
       availableSkills: [],
       devModeOptions: this.buildDevModeOptions(),
@@ -38,6 +71,7 @@ export class PayloadBuilder {
     toolResponses: PostmanToolResponse[],
     cwd: string,
     workspaceId: string,
+    selectedContext: any[] = [],
   ): any {
     const { clientTools, clientKBTerms } = this.buildClientTools();
     return {
@@ -50,11 +84,11 @@ export class PayloadBuilder {
         toolCallGroupId,
         toolResponses,
       },
-      platform: "DESKTOP_WINDOWS",
+      platform: this.platform,
       clientTools,
       clientKBTerms,
       mandatoryContext: { workspaceId },
-      selectedContext: [],
+      selectedContext,
       backgroundContext: this.buildBackgroundContext(cwd, workspaceId),
       availableSkills: [],
       devModeOptions: this.buildDevModeOptions(),
@@ -71,15 +105,15 @@ export class PayloadBuilder {
       "x-app-version": p.app_version,
       "x-entity-team-id": p.team_id,
       "x-pstmn-req-service": "agent-mode-service",
-      "user-agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Postman/${p.app_version} Electron/37.10.3 Safari/537.36`,
+      "user-agent": `Mozilla/5.0 (${this.uaOs}) AppleWebKit/537.36 (KHTML, like Gecko) Postman/${p.app_version} Electron/37.10.3 Safari/537.36`,
     };
   }
 
   private buildClientTools() {
     const p = this.settings.postman;
     const b = p.ui_build;
-    const toolsHash = `clienttools-workspace_v12-desktop-win32-${p.app_version}-ui-${b.date}-${b.time}-${b.tools_hash}`;
-    const kbHash = `kbterms-workspace_v12-desktop-win32-${p.app_version}-ui-${b.date}-${b.time}-${b.kb_hash}`;
+    const toolsHash = `clienttools-workspace_v12-desktop-${this.hashPlatform}-${p.app_version}-ui-${b.date}-${b.time}-${b.tools_hash}`;
+    const kbHash = `kbterms-workspace_v12-desktop-${this.hashPlatform}-${p.app_version}-ui-${b.date}-${b.time}-${b.kb_hash}`;
     return {
       clientTools: {
         nativeToolsHash: toolsHash,

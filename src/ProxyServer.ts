@@ -19,39 +19,39 @@ const CORS: Record<string, string> = {
 const MAX_TOOL_ROUNDS = 8;
 
 class RateLimiter {
-  private windows = new Map<string, { count: number; resetAt: number }>();
+    private windows = new Map<string, { count: number; resetAt: number }>();
 
-  constructor(private maxRequests: number, private windowMs: number, private errorMessage: string) {}
+    constructor(private maxRequests: number, private windowMs: number, private errorMessage: string) {}
 
-  check(key: string): Response | null {
-    const now = Date.now();
-    let w = this.windows.get(key);
-    if (!w || now >= w.resetAt) {
-      w = { count: 0, resetAt: now + this.windowMs };
-      this.windows.set(key, w);
+    check(key: string): Response | null {
+        const now = Date.now();
+        let w = this.windows.get(key);
+        if (!w || now >= w.resetAt) {
+            w = { count: 0, resetAt: now + this.windowMs };
+            this.windows.set(key, w);
+        }
+        w.count++;
+        if (w.count > this.maxRequests) {
+            const retryAfter = Math.ceil((w.resetAt - now) / 1000);
+            return new Response(
+                JSON.stringify({ error: this.errorMessage, retryAfter }),
+                                { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(retryAfter) } }
+            );
+        }
+        // Periodic cleanup
+        if (this.windows.size > 10_000) {
+            for (const [k, v] of this.windows) {
+                if (now >= v.resetAt) this.windows.delete(k);
+            }
+        }
+        return null;
     }
-    w.count++;
-    if (w.count > this.maxRequests) {
-      const retryAfter = Math.ceil((w.resetAt - now) / 1000);
-      return new Response(
-        JSON.stringify({ error: this.errorMessage, retryAfter }),
-        { status: 429, headers: { "Content-Type": "application/json", "Retry-After": String(retryAfter) } }
-      );
-    }
-    // Periodic cleanup
-    if (this.windows.size > 10_000) {
-      for (const [k, v] of this.windows) {
-        if (now >= v.resetAt) this.windows.delete(k);
-      }
-    }
-    return null;
-  }
 
-  getClientIp(req: Request): string {
-    return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-      ?? req.headers.get("x-real-ip")
-      ?? "127.0.0.1";
-  }
+    getClientIp(req: Request): string {
+        return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+        ?? req.headers.get("x-real-ip")
+        ?? "127.0.0.1";
+    }
 }
 
 export class ProxyServer {
@@ -80,13 +80,13 @@ export class ProxyServer {
         const activeCount = this.tokens.getActive().length;
 
         console.log(`
-      SkyUniverse ProxyAPI - http://${host}:${port}
-      Model AI      : ${model.padEnd(44)}
-      Access Token  :  ${String(activeCount).padEnd(44)}
-      Dashboard     :  http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/
-      ===============================================
-      Go To .claude/settings.json to Setup the Proxy
-`);
+        SkyUniverse ProxyAPI - http://${host}:${port}
+        Model AI      : ${model.padEnd(44)}
+        Access Token  :  ${String(activeCount).padEnd(44)}
+        Dashboard     :  http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}/
+        ===============================================
+        Go To .claude/settings.json to Setup the Proxy
+        `);
 
         Bun.serve({ port, hostname: host, fetch: (req) => this.handle(req), idleTimeout: 255 });
 
@@ -94,12 +94,12 @@ export class ProxyServer {
         this.versionChecker.check().then(info => {
             if (info.hasUpdate) {
                 console.log(`
-  ╔════════════════════════════════════════════════════════╗
-  ║  UPDATE AVAILABLE: v${info.latest?.padEnd(34) ?? ""} ║
-  ║  Current: v${info.current.padEnd(38)} ║
-  ║  ${(info.releaseUrl ?? "").padEnd(52)} ║
-  ╚════════════════════════════════════════════════════════╝
-`);
+                ╔════════════════════════════════════════════════════════╗
+                ║  UPDATE AVAILABLE: v${info.latest?.padEnd(34) ?? ""} ║
+                ║  Current: v${info.current.padEnd(38)} ║
+                ║  ${(info.releaseUrl ?? "").padEnd(52)} ║
+                ╚════════════════════════════════════════════════════════╝
+                `);
             }
         });
 
@@ -118,8 +118,8 @@ export class ProxyServer {
                 const resp = await fetch(`${this.settings.postman.base_url}/chat`, {
                     method: "POST",
                     headers: this.payload.headers(token.token),
-                    body: JSON.stringify(this.payload.refreshQuota()),
-                    signal: AbortSignal.timeout(15000),
+                                         body: JSON.stringify(this.payload.refreshQuota()),
+                                         signal: AbortSignal.timeout(15000),
                 });
                 if (!resp.ok) {
                     console.log(`  ⚠️  ${token.label}: HTTP ${resp.status}`);
@@ -129,7 +129,7 @@ export class ProxyServer {
                 if (result.quota?.limit) {
                     this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
                     const pct = Math.round(((result.quota.limit - result.quota.usage) / result.quota.limit) * 100);
-                    console.log(`  ✅ ${token.label}: ${result.quota.usage.toLocaleString()} / ${result.quota.limit.toLocaleString()} (${pct}% remaining)`);
+                    console.log(`  ✅ ${token.label}: Usage ${result.quota.usage.toLocaleString()} / ${result.quota.limit.toLocaleString()} (${pct}% remaining)`);
                 } else {
                     console.log(`  ⚠️  ${token.label}: No quota data`);
                 }
@@ -315,16 +315,16 @@ export class ProxyServer {
 
         const results: any[] = [];
         const tokens = targetId
-            ? this.tokens.all().filter(t => t.id === targetId && t.active)
-            : this.tokens.getActive();
+        ? this.tokens.all().filter(t => t.id === targetId && t.active)
+        : this.tokens.getActive();
 
         for (const token of tokens) {
             try {
                 const resp = await fetch(`${this.settings.postman.base_url}/chat`, {
                     method: "POST",
                     headers: this.payload.headers(token.token),
-                    body: JSON.stringify(this.payload.refreshQuota()),
-                    signal: AbortSignal.timeout(15000),
+                                         body: JSON.stringify(this.payload.refreshQuota()),
+                                         signal: AbortSignal.timeout(15000),
                 });
                 if (!resp.ok) {
                     results.push({ id: token.id, label: token.label, error: `HTTP ${resp.status}` });
@@ -380,9 +380,9 @@ export class ProxyServer {
             if (!body?.token) return this.json({ error: "Field 'token' wajib" }, 400);
             const t = this.tokens.add({
                 label: body.label ?? `Token ${Date.now()}`,
-                token: body.token,
-                active: body.active ?? true,
-                note: body.note ?? '',
+                                      token: body.token,
+                                      active: body.active ?? true,
+                                      note: body.note ?? '',
             });
             return this.json({ message: 'Token ditambahkan', id: t.id }, 201);
         }
@@ -438,8 +438,30 @@ export class ProxyServer {
         }
 
         const workspaceId = token.workspace_id?.trim() || this.settings.postman.workspace_id;
-        const userQuery = this.extractLastUserMessage(body);
+        const rawQuery = this.extractLastUserMessage(body);
+        const sanitized = this.sanitizeQuery(rawQuery, reqId);
+
+        // Extract @file blocks from query → selectedContext
+        const { cleanQuery: userQuery, files: inlineFiles } = this.extractFilesFromQuery(sanitized, reqId);
+
+        // Package system prompt + history as claude-context.md → selectedContext
+        const contextFile = this.buildContextFile(body, cwd, reqId);
+
+        // Merge: system context first, then @file contents (preserves Postman's priority order)
+        const selectedContext = [...contextFile, ...inlineFiles];
+
         const echoModel = body.model ?? this.settings.postman.model;
+
+        if (this.isQueryTooLong(userQuery)) {
+            this.logger.log('warn', `[${reqId}] ❌ Query too long after sanitize: ${userQuery.length} chars (Postman limit: 10,000). Returning error to client.`);
+            return this.json({
+                type: 'error',
+                error: {
+                    type: 'invalid_request_error',
+                    message: `Pesan terlalu panjang (${userQuery.length} karakter setelah strip system-reminder). Postman hanya menerima maksimal 10.000 karakter. Coba pecah menjadi beberapa pesan yang lebih pendek.`,
+                },
+            }, 400);
+        }
 
         this.logger.log('info', `[${reqId}] ✅ [${token.label}] | model:${this.settings.postman.model} | cwd:${cwd}`);
 
@@ -449,7 +471,7 @@ export class ProxyServer {
 
         (async () => {
             try {
-                await this.runProxyLoop(userQuery, cwd, workspaceId, token, writer, encoder, echoModel, reqId);
+                await this.runProxyLoop(userQuery, cwd, workspaceId, token, writer, encoder, echoModel, reqId, selectedContext);
             } catch (e: any) {
                 this.logger.log('error', `[${reqId}] 💥 Loop error: ${e?.message ?? String(e)}`);
             } finally {
@@ -464,7 +486,7 @@ export class ProxyServer {
 
     // ─── Proxy Loop ───────────────────────────────────────────────────────
 
-    private async runProxyLoop(query: string, cwd: string, workspaceId: string, token: AccessToken, writer: WritableStreamDefaultWriter<Uint8Array>, encoder: TextEncoder, echoModel: string, reqId: string): Promise<void> {
+    private async runProxyLoop(query: string, cwd: string, workspaceId: string, token: AccessToken, writer: WritableStreamDefaultWriter<Uint8Array>, encoder: TextEncoder, echoModel: string, reqId: string, contextFile: any[] = []): Promise<void> {
         let conversationId: string | undefined;
         const executor = new ToolExecutor(cwd);
 
@@ -475,11 +497,17 @@ export class ProxyServer {
         await this.writeSSE(writer, encoder, 'content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
         await this.writeSSE(writer, encoder, 'ping', { type: 'ping' });
 
-        this.logger.log('info', `[${reqId}] → USER_QUERY | ws:${workspaceId.slice(0, 8)} | cwd:${cwd}`);
-        const firstPayload = this.payload.userQuery(query, cwd, workspaceId);
+        // Warn about placeholder workspace_id — this is a common root cause of empty responses
+        const isPlaceholder = workspaceId === 'your-workspace-id' || workspaceId.trim() === '' || workspaceId.startsWith('your-');
+        if (isPlaceholder) {
+            this.logger.log('warn', `[${reqId}] ⚠️  workspace_id="${workspaceId}" looks like a placeholder! Postman will likely return empty responses. Fix: set workspace_id in settings.json or per-token.`);
+        }
+
+        this.logger.log('info', `[${reqId}] → USER_QUERY | ws:${workspaceId.slice(0, 8)} | base_url:${this.settings.postman.base_url} | model:${this.settings.postman.model} | query="${query.slice(0, 60)}" | ctx=${contextFile.length} file(s)`);
+        const firstPayload = this.payload.userQuery(query, cwd, workspaceId, conversationId, contextFile);
         let result = await this.postmanFetch(token, firstPayload, reqId, conversationId);
         if (result.conversationId) conversationId = result.conversationId;
-        await this.streamText(writer, encoder, result.text);
+        await this.streamText(writer, encoder, result.text, reqId);
         let pendingToolCalls = result.toolCalls;
 
         for (let round = 0; round < MAX_TOOL_ROUNDS && pendingToolCalls.length > 0; round++) {
@@ -504,25 +532,26 @@ export class ProxyServer {
                 toolResponses.push({
                     toolCallId: tc.id,
                     content: JSON.stringify(toolResult),
-                    toolResponseSummary: summary,
-                    toolResponseStatus: isSuccess ? 'SUCCESS' : 'ERROR',
+                                   toolResponseSummary: summary,
+                                   toolResponseStatus: isSuccess ? 'SUCCESS' : 'ERROR',
                 });
 
-                await this.streamText(writer, encoder, `\n*[${tc.function.name}: ${summary}]*\n`);
+                await this.streamText(writer, encoder, `\n*[${tc.function.name}: ${summary}]*\n`, reqId);
             }
 
             this.logger.log('info', `[${reqId}] → TOOL_RESPONSE | group:${toolCallGroupId.slice(0, 8)} | conv:${conversationId?.slice(0, 8)}`);
 
+            // On tool rounds, context is already established via conversationId — no need to re-send
             const toolPayload = this.payload.toolResponse(conversationId!, toolCallGroupId, toolResponses, cwd, workspaceId);
             result = await this.postmanFetch(token, toolPayload, reqId, conversationId);
             if (result.conversationId) conversationId = result.conversationId;
-            await this.streamText(writer, encoder, result.text);
+            await this.streamText(writer, encoder, result.text, reqId);
             pendingToolCalls = result.toolCalls;
         }
 
         if (pendingToolCalls.length > 0) {
             this.logger.log('warn', `[${reqId}] ⚠️  Max tool rounds (${MAX_TOOL_ROUNDS}) reached`);
-            await this.streamText(writer, encoder, `\n[Proxy: max tool rounds reached]\n`);
+            await this.streamText(writer, encoder, `\n[Proxy: max tool rounds reached]\n`, reqId);
         }
 
         this.logger.log('info', `[${reqId}] ✅ Done | conv:${conversationId?.slice(0, 8) ?? 'none'}`);
@@ -544,12 +573,15 @@ export class ProxyServer {
         const resp = await fetch(`${this.settings.postman.base_url}/chat`, {
             method: 'POST',
             headers: this.payload.headers(token.token),
-            body: JSON.stringify(payload),
+                                 body: JSON.stringify(payload),
+                                 signal: AbortSignal.timeout(120_000),
         });
+
+        this.logger.log('debug', `[${reqId}] 🌐 Postman HTTP ${resp.status} ${resp.statusText} | content-type: ${resp.headers.get('content-type') ?? 'n/a'}`);
 
         if (!resp.ok) {
             const errText = await resp.text().catch(() => '');
-            this.logger.log('error', `[${reqId}] ❌ Postman HTTP ${resp.status}`);
+            this.logger.log('error', `[${reqId}] ❌ Postman HTTP ${resp.status} | body: ${errText.slice(0, 300)}`);
 
             if (resp.status === 429 && retryCount < MAX_RETRIES) {
                 this.tokens.recordRateLimit(token.id);
@@ -580,15 +612,19 @@ export class ProxyServer {
         }
 
         this.tokens.recordRequest(token.id);
-        const result = await this.streamReader.read(resp.body!);
+        const result = await this.streamReader.read(resp.body!, this.logger, reqId);
         if (result.quota?.limit) {
-          this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
+            this.tokens.recordQuota(token.id, result.quota.limit, result.quota.usage, result.quota.cycleStart, result.quota.cycleEnd, result.quota.usageState);
         }
+        this.logger.log('info', `[${reqId}] 📨 postmanFetch result | textLen=${result.text.length} toolCalls=${result.toolCalls.length} conv=${result.conversationId?.slice(0, 8) ?? 'none'}`);
         return result;
     }
 
-    private async streamText(writer: WritableStreamDefaultWriter<Uint8Array>, encoder: TextEncoder, text: string): Promise<void> {
-        if (!text) return;
+    private async streamText(writer: WritableStreamDefaultWriter<Uint8Array>, encoder: TextEncoder, text: string, reqId?: string): Promise<void> {
+        if (!text) {
+            if (reqId) this.logger.log('debug', `[${reqId}] ⏭️  streamText: empty text, skipping SSE write`);
+            return;
+        }
         await this.writeSSE(writer, encoder, 'content_block_delta', {
             type: 'content_block_delta',
             index: 0,
@@ -617,6 +653,148 @@ export class ProxyServer {
         return this.settings.postman.file_viewer_path?.trim() || xCwd || envCwd || sysCwd || process.cwd();
     }
 
+    private sanitizeQuery(raw: string, reqId: string): string {
+        // Strip <system-reminder>...</system-reminder> injected by Claude Code —
+        // these are Anthropic-internal meta-instructions irrelevant to Postman
+        // and can be hundreds of lines long.
+        let q = raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '').trim();
+
+        const stripped = raw.length - q.length;
+        if (stripped > 0) {
+            this.logger.log('debug', `[${reqId}] ✂️  Stripped ${stripped} chars of <system-reminder> from query (${raw.length} → ${q.length} chars)`);
+        }
+
+        return q;
+    }
+
+    private isQueryTooLong(query: string): boolean {
+        return query.length > 9_500; // Postman hard limit is 10,000 chars
+    }
+
+    /**
+     * Package system prompt + conversation history as a synthetic markdown file
+     * in selectedContext. This is exactly how Postman's own client sends file
+     * contents — the query stays short, the context lives in selectedContext.
+     *
+     * Max size: 80 KB (Postman seems to handle selectedContext separately from
+     * the 10,000 char query limit). We truncate from the start of history
+     * (oldest messages dropped first) if needed.
+     */
+    private buildContextFile(body: AnthropicRequest, cwd: string, reqId: string): any[] {
+        const MAX_CONTEXT_CHARS = 80_000;
+
+        const sysText = this.extractSystemText(body.system)
+        // Strip <system-reminder> from system too
+        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '')
+        .trim();
+
+        // Build conversation history (all messages except the last user turn,
+        // which is already in `query`)
+        const historyParts: string[] = [];
+        for (let i = 0; i < body.messages.length - 1; i++) {
+            const msg = body.messages[i];
+            if (!msg) continue;
+            const role = msg.role === 'user' ? 'User' : 'Assistant';
+            const text = this.extractText(msg.content ?? '').trim();
+            if (text) historyParts.push(`### ${role}\n${text}`);
+        }
+
+        const sections: string[] = [];
+        if (sysText) sections.push(`# System Instructions\n\n${sysText}`);
+        if (historyParts.length) sections.push(`# Conversation History\n\n${historyParts.join('\n\n---\n\n')}`);
+
+        if (!sections.length) return [];
+
+        let content = sections.join('\n\n---\n\n');
+
+        // Trim oldest history lines if over limit
+        if (content.length > MAX_CONTEXT_CHARS) {
+            this.logger.log('warn', `[${reqId}] ✂️  Context file too large (${content.length} chars), trimming oldest history to fit ${MAX_CONTEXT_CHARS} chars`);
+            content = content.slice(content.length - MAX_CONTEXT_CHARS);
+            // Don't start mid-line
+            const nl = content.indexOf('\n');
+            if (nl > 0) content = content.slice(nl + 1);
+        }
+
+        const filePath = `${cwd}/claude-context.md`;
+        this.logger.log('debug', `[${reqId}] 📎 Context file: ${content.length} chars → selectedContext`);
+
+        return [{
+            type: "file",
+            id: filePath,
+            value: {
+                type: "file",
+                name: "claude-context.md",
+                path: filePath,
+                size: content.length,
+                content,
+                extension: ".md",
+                lastModified: new Date().toISOString(),
+                platform: "desktop",
+                accessible: true,
+            },
+        }];
+    }
+
+    /**
+     * Claude Code embeds @file references directly inside the user message text
+     * as <file_content path="...">...</file_content> blocks.
+     *
+     * This method extracts all such blocks, converts them to Postman-native
+     * selectedContext file entries (identical format to the curl example), and
+     * returns the cleaned query (without the embedded blocks) + the file entries.
+     *
+     * Example input query:
+     *   <file_content path="/home/adelle/project/src/foo.ts">
+     *   ...800 lines...
+     *   </file_content>
+     *
+     *   review this
+     *
+     * Output:
+     *   cleanQuery  = "review this"
+     *   files       = [{ type:"file", value:{ name:"foo.ts", content:"...800 lines..." } }]
+     */
+    private extractFilesFromQuery(raw: string, reqId: string): { cleanQuery: string; files: any[] } {
+        const files: any[] = [];
+
+        // Match <file_content path="...">...</file_content>
+        // Also handles antml:document and similar variants Claude Code may use
+        const FILE_BLOCK_RE = /<(?:file_content|antml:document)[^>]*?path=["']([^"']+)["'][^>]*?>([\s\S]*?)<\/(?:file_content|antml:document)>/gi;
+
+        let cleanQuery = raw.replace(FILE_BLOCK_RE, (_match, filePath: string, content: string) => {
+            const trimmed = content.trim();
+            const name = filePath.split('/').pop() ?? filePath;
+            const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
+
+            this.logger.log('debug', `[${reqId}] 📎 @file extracted: "${name}" (${trimmed.length} chars) → selectedContext`);
+
+            files.push({
+                type: "file",
+                id: filePath,
+                value: {
+                    type: "file",
+                    name,
+                    path: filePath,
+                    size: trimmed.length,
+                    content: trimmed,
+                    extension: ext,
+                    lastModified: new Date().toISOString(),
+                       platform: "desktop",
+                       accessible: true,
+                },
+            });
+
+            return ''; // Remove the block from query
+        }).trim();
+
+        if (files.length > 0) {
+            this.logger.log('info', `[${reqId}] 📎 Extracted ${files.length} @file(s) from query → selectedContext`);
+        }
+
+        return { cleanQuery, files };
+    }
+
     private extractLastUserMessage(body: AnthropicRequest): string {
         for (let i = body.messages.length - 1; i >= 0; i--) {
             if (body.messages[i]?.role === 'user') {
@@ -629,9 +807,9 @@ export class ProxyServer {
     private extractText(content: string | Array<{ type: string; text?: string }>): string {
         if (typeof content === 'string') return content;
         return content
-            .filter((c) => c.type === 'text')
-            .map((c) => c.text ?? '')
-            .join('\n');
+        .filter((c) => c.type === 'text')
+        .map((c) => c.text ?? '')
+        .join('\n');
     }
 
     private extractSystemText(system: any): string {

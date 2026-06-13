@@ -29,6 +29,9 @@ export class TokenManager {
     usageState: string;
   }> = new Map();
 
+  // Daily usage tracking: tokenId → dateString → count
+  private readonly dailyUsage: Map<number, Map<string, number>> = new Map();
+
   constructor(config: Config) {
     this.config = config;
   }
@@ -89,6 +92,12 @@ export class TokenManager {
     }
     s.requestCount++;
     s.lastUsed = Date.now();
+
+    // Track daily usage
+    const today = new Date().toISOString().slice(0, 10);
+    let daily = this.dailyUsage.get(tokenId);
+    if (!daily) { daily = new Map(); this.dailyUsage.set(tokenId, daily); }
+    daily.set(today, (daily.get(today) ?? 0) + 1);
   }
 
   recordRateLimit(tokenId: number): void {

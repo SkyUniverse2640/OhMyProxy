@@ -15,8 +15,8 @@ export class ToolExecutor {
   private resolvePath(p: string): string {
     if (!p || p === "" || p === ".") return this.cwd;
     const resolved = p.match(/^[A-Za-z]:[\\\/]/) || p.startsWith("/")
-      ? resolve(p)
-      : resolve(this.cwd, p);
+    ? resolve(p)
+    : resolve(this.cwd, p);
     // Prevent path traversal outside cwd
     if (!resolved.startsWith(this.cwd + "/") && resolved !== this.cwd) {
       throw new Error(`Path outside workspace: ${p}`);
@@ -32,7 +32,8 @@ export class ToolExecutor {
         case "listDirectory":    return this.listDirectory(args);
         case "readFile":
         case "read":             return this.readFile(args);
-        case "searchFiles":      return this.searchFiles(args);
+        case "searchFiles":
+        case "searchInFiles":    return this.searchInFiles(args);
         case "grep":             return this.grep(args);
         case "glob":             return this.glob(args);
         case "createFile":
@@ -66,10 +67,10 @@ export class ToolExecutor {
       /\bdd\s+if=/,
       /\bmkfs\./,
       /\b:\(\)\s*\{/,   // fork bomb
-      />\s*\/dev\/sda/,
-      /\bchmod\s+.*777/,
-      /\bcurl.*\|\s*(ba)?sh/,
-      /\bwget.*\|\s*(ba)?sh/,
+        />\s*\/dev\/sda/,
+        /\bchmod\s+.*777/,
+        /\bcurl.*\|\s*(ba)?sh/,
+        /\bwget.*\|\s*(ba)?sh/,
     ];
     for (const pattern of DANGEROUS_PATTERNS) {
       if (pattern.test(command)) {
@@ -101,391 +102,447 @@ export class ToolExecutor {
     } catch {
       return { error: "Tool execution failed", status: "ERROR" };
     }
-  }
+      }
 
-  // ─── Grep ──────────────────────────────────────────────────────────────
+      // ─── Grep ──────────────────────────────────────────────────────────────
 
-  private grep(args: any): any {
-    const pattern = args.pattern ?? args.query ?? "";
-    if (!pattern) return { error: "No pattern provided" };
+      private grep(args: any): any {
+        const pattern = args.pattern ?? args.query ?? "";
+        if (!pattern) return { error: "No pattern provided" };
 
-    const dir = this.resolvePath(args.path ?? args.directory ?? ".");
-    const include = args.include ?? args.glob ?? "";
-    const maxResults = args.maxResults ?? args.limit ?? 100;
+        const dir = this.resolvePath(args.path ?? args.directory ?? ".");
+        const include = args.include ?? args.glob ?? "";
+        const maxResults = args.maxResults ?? args.limit ?? 100;
 
-    const results: Array<{ file: string; line: number; content: string }> = [];
-    try {
-      const regex = new RegExp(pattern, "gm");
-      this.walkFiles(dir, include, (fp) => {
-        if (results.length >= maxResults) return false;
+        const results: Array<{ file: string; line: number; content: string }> = [];
         try {
-          const content = readFileSync(fp, "utf-8");
-          const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            if (results.length >= maxResults) break;
-            const line = lines[i] ?? "";
-            if (regex.test(line)) {
-              results.push({ file: relative(this.cwd, fp), line: i + 1, content: line.trim() });
-              regex.lastIndex = 0;
+          const regex = new RegExp(pattern, "gm");
+          this.walkFiles(dir, include, (fp) => {
+            if (results.length >= maxResults) return false;
+            try {
+              const content = readFileSync(fp, "utf-8");
+              const lines = content.split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                if (results.length >= maxResults) break;
+                const line = lines[i] ?? "";
+                if (regex.test(line)) {
+                  results.push({ file: relative(this.cwd, fp), line: i + 1, content: line.trim() });
+                  regex.lastIndex = 0;
+                }
+              }
+            } catch { /* skip unreadable files */ }
+            return true;
+          });
+        } catch { return { error: `Invalid pattern: ${pattern}` }; }
+
+        return { results, total: results.length };
+      }
+
+      // ─── Glob ──────────────────────────────────────────────────────────────
+
+      private glob(args: any): any {
+        const pattern = args.pattern ?? args.glob ?? "**/*";
+        const dir = this.resolvePath(args.path ?? args.directory ?? ".");
+        const maxResults = args.maxResults ?? args.limit ?? 200;
+
+        const results: string[] = [];
+        this.walkFiles(dir, pattern, (fp) => {
+          if (results.length >= maxResults) return false;
+          results.push(relative(this.cwd, fp));
+          return true;
+        });
+
+        return { results, total: results.length };
+      }
+
+      // ─── Edit ──────────────────────────────────────────────────────────────
+
+      private edit(args: any): any {
+        const fp = this.resolvePath(args.filePath ?? args.path ?? "");
+        if (!existsSync(fp)) return { error: `File not found: ${fp}` };
+
+        const oldStr = args.oldString ?? args.old_string ?? args.search ?? "";
+        const newStr = args.newString ?? args.new_string ?? args.replace ?? "";
+        const replaceAll = args.replaceAll ?? args.replace_all ?? false;
+
+        const content = readFileSync(fp, "utf-8");
+
+        if (!content.includes(oldStr)) {
+          return { error: "old_string not found in file", status: "ERROR" };
+        }
+
+        const occurrences = content.split(oldStr).length - 1;
+        if (occurrences > 1 && !replaceAll) {
+          return {
+            error: `old_string matches ${occurrences} times but replace_all is not set`,
+            status: "ERROR",
+          };
+        }
+
+        const newContent = replaceAll
+        ? content.split(oldStr).join(newStr)
+        : content.replace(oldStr, newStr);
+
+        writeFileSync(fp, newContent, "utf-8");
+        const filePath = relative(this.cwd, fp) || basename(fp);
+        return {
+          status: "SUCCESS",
+          message: `Edited file: ${filePath}`,
+          filePath,
+        };
+      }
+
+      // ─── WebSearch ─────────────────────────────────────────────────────────
+
+      private async webSearch(args: any): Promise<any> {
+        const query = args.query ?? args.searchTerm ?? "";
+        if (!query) return { error: "No search query provided" };
+
+        const allowedDomains = args.allowedDomains ?? args.allowed_domains ?? [];
+        const blockedDomains = args.blockedDomains ?? args.blocked_domains ?? [];
+        const maxResults = args.maxResults ?? args.limit ?? 10;
+
+        // Build a DuckDuckGo Lite search URL (no API key needed)
+        const ddgQuery = encodeURIComponent(query);
+        const url = `https://lite.duckduckgo.com/lite/?q=${ddgQuery}`;
+
+        try {
+          const resp = await fetch(url, {
+            headers: { "User-Agent": "OhMyProxy/1.0" },
+            signal: AbortSignal.timeout(15_000),
+          });
+
+          if (!resp.ok) {
+            return { error: `Search failed: HTTP ${resp.status}`, status: "ERROR" };
+          }
+
+          const html = await resp.text();
+          const results = this.parseDuckDuckGoResults(html, maxResults);
+
+          // Filter by allowed/blocked domains
+          let filtered = results;
+          if (allowedDomains.length > 0) {
+            filtered = filtered.filter((r) =>
+            allowedDomains.some((d: string) => r.url.includes(d))
+            );
+          }
+          if (blockedDomains.length > 0) {
+            filtered = filtered.filter(
+              (r) => !blockedDomains.some((d: string) => r.url.includes(d))
+            );
+          }
+
+          return {
+            query,
+            results: filtered.slice(0, maxResults),
+            total: filtered.length,
+            status: "SUCCESS",
+          };
+        } catch (e: any) {
+          return { error: `Search error: ${e.message}`, status: "ERROR" };
+        }
+      }
+
+      private parseDuckDuckGoResults(html: string, max: number): Array<{ title: string; url: string; snippet: string }> {
+        const results: Array<{ title: string; url: string; snippet: string }> = [];
+        // DDG Lite returns results in <a> tags with class="result-link" and snippets in <td class="result-snippet">
+        const linkRegex = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</gi;
+        const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([^<]*)</gi;
+
+        const links: Array<{ url: string; title: string }> = [];
+        let match;
+        while ((match = linkRegex.exec(html)) !== null && links.length < max) {
+          const url = match[1] ?? "";
+          const title = match[2]?.trim() ?? "";
+          if (url && title && !url.includes("duckduckgo.com")) {
+            links.push({ url, title });
+          }
+        }
+
+        const snippets: string[] = [];
+        while ((match = snippetRegex.exec(html)) !== null && snippets.length < max) {
+          const snippet = match[1]?.trim() ?? "";
+          if (snippet) snippets.push(snippet);
+        }
+
+        for (let i = 0; i < Math.min(links.length, snippets.length); i++) {
+          results.push({ ...links[i]!, snippet: snippets[i]! });
+        }
+
+        return results;
+      }
+
+      // ─── WebFetch ──────────────────────────────────────────────────────────
+
+      private isPrivateIP(ip: string): boolean {
+        if (isIP(ip) === 0) return false;
+        // IPv4 private/loopback/link-local/reserved
+        if (ip === "0.0.0.0") return true;
+        if (ip.startsWith("10.")) return true;
+        if (ip.startsWith("172.")) {
+          const second = parseInt(ip.split(".")[1] ?? "0");
+          if (second >= 16 && second <= 31) return true;
+        }
+        if (ip.startsWith("192.168.")) return true;
+        if (ip.startsWith("127.")) return true;
+        if (ip.startsWith("169.254.")) return true;
+        if (ip.startsWith("224.") || ip.startsWith("239.")) return true;
+        // IPv6 local/loopback/link-local/ULA
+        if (ip === "::1" || ip === "::" || ip.startsWith("fe80:") ||
+          (ip.startsWith("fc") || ip.startsWith("fd"))) return true;
+        return false;
+      }
+
+      private async validateFetchURL(urlStr: string): Promise<string | null> {
+        try {
+          const parsed = new URL(urlStr);
+          const hostname = parsed.hostname;
+          if (isIP(hostname) && this.isPrivateIP(hostname)) {
+            return `Blocked: private/reserved IP address: ${hostname}`;
+          }
+          const ips: string[] = [];
+          try {
+            const resolved4 = await dns.resolve4(hostname);
+            ips.push(...resolved4);
+          } catch {}
+          try {
+            const resolved6 = await dns.resolve6(hostname);
+            ips.push(...resolved6);
+          } catch {}
+          if (ips.length === 0 && !isIP(hostname)) {
+            return `Blocked: could not resolve hostname: ${hostname}`;
+          }
+          for (const ip of ips) {
+            if (this.isPrivateIP(ip)) {
+              return `Blocked: hostname ${hostname} resolves to private IP: ${ip}`;
             }
           }
-        } catch { /* skip unreadable files */ }
-        return true;
-      });
-    } catch { return { error: `Invalid pattern: ${pattern}` }; }
-
-    return { results, total: results.length };
-  }
-
-  // ─── Glob ──────────────────────────────────────────────────────────────
-
-  private glob(args: any): any {
-    const pattern = args.pattern ?? args.glob ?? "**/*";
-    const dir = this.resolvePath(args.path ?? args.directory ?? ".");
-    const maxResults = args.maxResults ?? args.limit ?? 200;
-
-    const results: string[] = [];
-    this.walkFiles(dir, pattern, (fp) => {
-      if (results.length >= maxResults) return false;
-      results.push(relative(this.cwd, fp));
-      return true;
-    });
-
-    return { results, total: results.length };
-  }
-
-  // ─── Edit ──────────────────────────────────────────────────────────────
-
-  private edit(args: any): any {
-    const fp = this.resolvePath(args.filePath ?? args.path ?? "");
-    if (!existsSync(fp)) return { error: `File not found: ${fp}` };
-
-    const oldStr = args.oldString ?? args.old_string ?? args.search ?? "";
-    const newStr = args.newString ?? args.new_string ?? args.replace ?? "";
-    const replaceAll = args.replaceAll ?? args.replace_all ?? false;
-
-    const content = readFileSync(fp, "utf-8");
-
-    if (!content.includes(oldStr)) {
-      return { error: "old_string not found in file", status: "ERROR" };
-    }
-
-    const occurrences = content.split(oldStr).length - 1;
-    if (occurrences > 1 && !replaceAll) {
-      return {
-        error: `old_string matches ${occurrences} times but replace_all is not set`,
-        status: "ERROR",
-      };
-    }
-
-    const newContent = replaceAll
-      ? content.split(oldStr).join(newStr)
-      : content.replace(oldStr, newStr);
-
-    writeFileSync(fp, newContent, "utf-8");
-    const filePath = relative(this.cwd, fp) || basename(fp);
-    return {
-      status: "SUCCESS",
-      message: `Edited file: ${filePath}`,
-      filePath,
-    };
-  }
-
-  // ─── WebSearch ─────────────────────────────────────────────────────────
-
-  private async webSearch(args: any): Promise<any> {
-    const query = args.query ?? args.searchTerm ?? "";
-    if (!query) return { error: "No search query provided" };
-
-    const allowedDomains = args.allowedDomains ?? args.allowed_domains ?? [];
-    const blockedDomains = args.blockedDomains ?? args.blocked_domains ?? [];
-    const maxResults = args.maxResults ?? args.limit ?? 10;
-
-    // Build a DuckDuckGo Lite search URL (no API key needed)
-    const ddgQuery = encodeURIComponent(query);
-    const url = `https://lite.duckduckgo.com/lite/?q=${ddgQuery}`;
-
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "OhMyProxy/1.0" },
-        signal: AbortSignal.timeout(15_000),
-      });
-
-      if (!resp.ok) {
-        return { error: `Search failed: HTTP ${resp.status}`, status: "ERROR" };
-      }
-
-      const html = await resp.text();
-      const results = this.parseDuckDuckGoResults(html, maxResults);
-
-      // Filter by allowed/blocked domains
-      let filtered = results;
-      if (allowedDomains.length > 0) {
-        filtered = filtered.filter((r) =>
-          allowedDomains.some((d: string) => r.url.includes(d))
-        );
-      }
-      if (blockedDomains.length > 0) {
-        filtered = filtered.filter(
-          (r) => !blockedDomains.some((d: string) => r.url.includes(d))
-        );
-      }
-
-      return {
-        query,
-        results: filtered.slice(0, maxResults),
-        total: filtered.length,
-        status: "SUCCESS",
-      };
-    } catch (e: any) {
-      return { error: `Search error: ${e.message}`, status: "ERROR" };
-    }
-  }
-
-  private parseDuckDuckGoResults(html: string, max: number): Array<{ title: string; url: string; snippet: string }> {
-    const results: Array<{ title: string; url: string; snippet: string }> = [];
-    // DDG Lite returns results in <a> tags with class="result-link" and snippets in <td class="result-snippet">
-    const linkRegex = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)</gi;
-    const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([^<]*)</gi;
-
-    const links: Array<{ url: string; title: string }> = [];
-    let match;
-    while ((match = linkRegex.exec(html)) !== null && links.length < max) {
-      const url = match[1] ?? "";
-      const title = match[2]?.trim() ?? "";
-      if (url && title && !url.includes("duckduckgo.com")) {
-        links.push({ url, title });
-      }
-    }
-
-    const snippets: string[] = [];
-    while ((match = snippetRegex.exec(html)) !== null && snippets.length < max) {
-      const snippet = match[1]?.trim() ?? "";
-      if (snippet) snippets.push(snippet);
-    }
-
-    for (let i = 0; i < Math.min(links.length, snippets.length); i++) {
-      results.push({ ...links[i]!, snippet: snippets[i]! });
-    }
-
-    return results;
-  }
-
-  // ─── WebFetch ──────────────────────────────────────────────────────────
-
-  private isPrivateIP(ip: string): boolean {
-    if (isIP(ip) === 0) return false;
-    // IPv4 private/loopback/link-local/reserved
-    if (ip === "0.0.0.0") return true;
-    if (ip.startsWith("10.")) return true;
-    if (ip.startsWith("172.")) {
-      const second = parseInt(ip.split(".")[1] ?? "0");
-      if (second >= 16 && second <= 31) return true;
-    }
-    if (ip.startsWith("192.168.")) return true;
-    if (ip.startsWith("127.")) return true;
-    if (ip.startsWith("169.254.")) return true;
-    if (ip.startsWith("224.") || ip.startsWith("239.")) return true;
-    // IPv6 local/loopback/link-local/ULA
-    if (ip === "::1" || ip === "::" || ip.startsWith("fe80:") ||
-        (ip.startsWith("fc") || ip.startsWith("fd"))) return true;
-    return false;
-  }
-
-  private async validateFetchURL(urlStr: string): Promise<string | null> {
-    try {
-      const parsed = new URL(urlStr);
-      const hostname = parsed.hostname;
-      if (isIP(hostname) && this.isPrivateIP(hostname)) {
-        return `Blocked: private/reserved IP address: ${hostname}`;
-      }
-      const ips: string[] = [];
-      try {
-        const resolved4 = await dns.resolve4(hostname);
-        ips.push(...resolved4);
-      } catch {}
-      try {
-        const resolved6 = await dns.resolve6(hostname);
-        ips.push(...resolved6);
-      } catch {}
-      if (ips.length === 0 && !isIP(hostname)) {
-        return `Blocked: could not resolve hostname: ${hostname}`;
-      }
-      for (const ip of ips) {
-        if (this.isPrivateIP(ip)) {
-          return `Blocked: hostname ${hostname} resolves to private IP: ${ip}`;
+          return null;
+        } catch {
+          return `Blocked: invalid URL: ${urlStr}`;
         }
       }
-      return null;
-    } catch {
-      return `Blocked: invalid URL: ${urlStr}`;
-    }
-  }
 
-  private async webFetch(args: any): Promise<any> {
-    const url = args.url ?? args.urlToFetch ?? "";
-    if (!url) return { error: "No URL provided" };
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      return { error: "URL must start with http:// or https://" };
-    }
+      private async webFetch(args: any): Promise<any> {
+        const url = args.url ?? args.urlToFetch ?? "";
+        if (!url) return { error: "No URL provided" };
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+          return { error: "URL must start with http:// or https://" };
+        }
 
-    // SSRF protection: block private/reserved IPs
-    const blockReason = await this.validateFetchURL(url);
-    if (blockReason) {
-      return { error: blockReason, status: "ERROR" };
-    }
+        // SSRF protection: block private/reserved IPs
+        const blockReason = await this.validateFetchURL(url);
+        if (blockReason) {
+          return { error: blockReason, status: "ERROR" };
+        }
 
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "OhMyProxy/1.0" },
-        signal: AbortSignal.timeout(20_000),
-      });
+        try {
+          const resp = await fetch(url, {
+            headers: { "User-Agent": "OhMyProxy/1.0" },
+            signal: AbortSignal.timeout(20_000),
+          });
 
-      if (!resp.ok) {
-        return { error: `Fetch failed: HTTP ${resp.status}`, status: "ERROR" };
-      }
-
-      const contentType = resp.headers.get("content-type") ?? "";
-      const maxLen = args.maxLength ?? args.max_length ?? 50_000;
-
-      if (contentType.includes("application/json")) {
-        const json = await resp.json();
-        return { url, content: JSON.stringify(json).slice(0, maxLen), contentType, status: "SUCCESS" };
-      }
-
-      const text = await resp.text();
-      // Strip HTML tags for readability
-      const stripped = contentType.includes("text/html")
-        ? text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s{2,}/g, "\n")
-            .trim()
-        : text;
-
-      return {
-        url,
-        content: stripped.slice(0, maxLen),
-        contentType,
-        originalLength: text.length,
-        status: "SUCCESS",
-      };
-    } catch (e: any) {
-      return { error: `Fetch error: ${e.message}`, status: "ERROR" };
-    }
-  }
-
-  // ─── Helpers ───────────────────────────────────────────────────────────
-
-  private walkFiles(dir: string, pattern: string, fn: (fp: string) => boolean): void {
-    if (!existsSync(dir)) return;
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const fp = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".next") continue;
-          this.walkFiles(fp, pattern, fn);
-        } else if (entry.isFile()) {
-          if (!pattern || pattern === "**/*" || entry.name.includes(pattern)) {
-            if (!fn(fp)) break;
+          if (!resp.ok) {
+            return { error: `Fetch failed: HTTP ${resp.status}`, status: "ERROR" };
           }
+
+          const contentType = resp.headers.get("content-type") ?? "";
+          const maxLen = args.maxLength ?? args.max_length ?? 50_000;
+
+          if (contentType.includes("application/json")) {
+            const json = await resp.json();
+            return { url, content: JSON.stringify(json).slice(0, maxLen), contentType, status: "SUCCESS" };
+          }
+
+          const text = await resp.text();
+          // Strip HTML tags for readability
+          const stripped = contentType.includes("text/html")
+          ? text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s{2,}/g, "\n")
+          .trim()
+          : text;
+
+          return {
+            url,
+            content: stripped.slice(0, maxLen),
+            contentType,
+            originalLength: text.length,
+            status: "SUCCESS",
+          };
+        } catch (e: any) {
+          return { error: `Fetch error: ${e.message}`, status: "ERROR" };
         }
       }
-    } catch { /* skip inaccessible dirs */ }
-  }
 
-  // ─── Tool Implementations ──────────────────────────────────────────────
+      // ─── Helpers ───────────────────────────────────────────────────────────
 
-  private listDirectory(args: any): any {
-    const dir = this.resolvePath(args.relativePath ?? args.path ?? "");
-    if (!existsSync(dir)) return { error: `Directory not found: ${dir}` };
-    const entries = readdirSync(dir, { withFileTypes: true }).map(e => ({
-      name: e.name,
-      type: e.isDirectory() ? "directory" : "file",
-      path: join(dir, e.name),
-    }));
-    return { path: dir, entries };
-  }
-
-  private readFile(args: any): any {
-    const fp = this.resolvePath(args.relativePath ?? args.path ?? "");
-    if (!existsSync(fp)) return { error: `File not found: ${fp}` };
-    return { path: fp, content: readFileSync(fp, "utf-8") };
-  }
-
-  private searchFiles(args: any): any {
-    const dir = this.resolvePath(args.relativePath ?? args.path ?? "");
-    const pattern = args.pattern ?? args.query ?? "";
-    const results: string[] = [];
-    const walk = (d: string) => {
-      if (!existsSync(d)) return;
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        const fp = join(d, e.name);
-        if (e.isDirectory()) walk(fp);
-        else if (e.name.includes(pattern)) results.push(fp);
+      private walkFiles(dir: string, pattern: string, fn: (fp: string) => boolean): void {
+        if (!existsSync(dir)) return;
+        try {
+          for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const fp = join(dir, entry.name);
+            if (entry.isDirectory()) {
+              if (entry.name === "node_modules" || entry.name === ".git" || entry.name === ".next") continue;
+              this.walkFiles(fp, pattern, fn);
+            } else if (entry.isFile()) {
+              if (!pattern || pattern === "**/*" || entry.name.includes(pattern)) {
+                if (!fn(fp)) break;
+              }
+            }
+          }
+        } catch { /* skip inaccessible dirs */ }
       }
-    };
-    walk(dir);
-    return { results };
-  }
 
-  private writeFile(args: any): any {
-    const rawPath = args.path ?? args.filePath ?? args.relativePath ?? "";
-    const fp = this.resolvePath(rawPath);
-    const content = args.content ?? args.fileContent ?? "";
-    const dir = dirname(fp);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(fp, content, "utf-8");
-    const filePath = rawPath || relative(this.cwd, fp) || basename(fp);
-    return {
-      status: "SUCCESS",
-      message: `Created file: ${filePath}`,
-      filePath,
-      contentLength: Buffer.byteLength(content, "utf-8"),
-      platform: "desktop",
-    };
-  }
+      // ─── Tool Implementations ──────────────────────────────────────────────
 
-  private createDirectory(args: any): any {
-    const fp = this.resolvePath(args.relativePath ?? args.path ?? "");
-    mkdirSync(fp, { recursive: true });
-    return { status: "SUCCESS", path: fp };
-  }
+      private listDirectory(args: any): any {
+        const dir = this.resolvePath(args.relativePath ?? args.path ?? "");
+        if (!existsSync(dir)) return { error: `Directory not found: ${dir}` };
+        const entries = readdirSync(dir, { withFileTypes: true }).map(e => ({
+          name: e.name,
+          type: e.isDirectory() ? "directory" : "file",
+                                                                            path: join(dir, e.name),
+        }));
+        return { path: dir, entries };
+      }
 
-  private deleteFile(args: any): any {
-    const fp = this.resolvePath(args.relativePath ?? args.path ?? "");
-    if (existsSync(fp)) unlinkSync(fp);
-    const filePath = args.path ?? args.relativePath ?? basename(fp);
-    return { status: "SUCCESS", message: `Deleted file: ${filePath}`, platform: "desktop" };
-  }
+      private readFile(args: any): any {
+        // Postman sends: filePath, readMode ("full"|"head"|"tail"), headLines, tailLines
+        // Claude Code may also send: relativePath, path
+        const rawPath = args.filePath ?? args.relativePath ?? args.path ?? "";
+        if (!rawPath) return { error: "No file path provided" };
 
-  // ─── Summary ───────────────────────────────────────────────────────────
+        const fp = this.resolvePath(rawPath);
+        if (!existsSync(fp)) return { error: `File not found: ${rawPath}`, status: "ERROR" };
 
-  static summarize(name: string, args: any, result: any): string {
-    if (result?.error) return `Error: ${String(result.error).slice(0, 60)}`;
-    const fileName = basename(args.path ?? args.filePath ?? args.relativePath ?? "") || "";
-    const cmd = args.command ?? args.cmd ?? "";
-    const summaries: Record<string, string> = {
-      bash:             `Bash: ${cmd.slice(0, 50)}`,
-      runCommand:       `Bash: ${cmd.slice(0, 50)}`,
-      createFile:       `Created ${fileName || "file"}`,
-      writeFile:        `Created ${fileName || "file"}`,
-      write:            `Created ${fileName || "file"}`,
-      readFile:         `Read ${fileName || "file"}`,
-      read:             `Read ${fileName || "file"}`,
-      edit:             `Edited ${fileName || "file"}`,
-      editFile:         `Edited ${fileName || "file"}`,
-      deleteFile:       `Deleted ${fileName || "file"}`,
-      createDirectory:  `Created directory ${fileName}`,
-      listDirectory:    `Listed ${fileName || "directory"}`,
-      searchFiles:      `Search: ${args.pattern ?? args.query ?? ""}`,
-      grep:             `Grep: ${args.pattern ?? ""}`,
-      glob:             `Glob: ${args.pattern ?? ""}`,
-      webSearch:        `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
-      web_search:       `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
-      webFetch:         `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
-      web_fetch:        `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
-    };
-    return summaries[name] ?? `${name} completed`;
+        const raw = readFileSync(fp, "utf-8");
+        const readMode: string = args.readMode ?? "full";
+
+        let content: string;
+        if (readMode === "head") {
+          const n = args.headLines ?? args.lines ?? 50;
+          content = raw.split("\n").slice(0, n).join("\n");
+        } else if (readMode === "tail") {
+          const n = args.tailLines ?? args.lines ?? 50;
+          const lines = raw.split("\n");
+          content = lines.slice(Math.max(0, lines.length - n)).join("\n");
+        } else {
+          content = raw;
+        }
+
+        return {
+          status: "SUCCESS",
+          path: fp,
+          content,
+          totalLines: raw.split("\n").length,
+          readMode,
+        };
+      }
+
+      /**
+       * searchInFiles: search by filename pattern (what Postman sends as fileNamePatterns)
+       * searchFiles: alias for legacy compatibility
+       */
+      private searchInFiles(args: any): any {
+        // Postman sends: fileNamePatterns (string[]), searchQuery (optional text search within files)
+        // Legacy: pattern (string), query (string), relativePath
+        const namePatterns: string[] = args.fileNamePatterns ?? (args.pattern ? [args.pattern] : []);
+        const textQuery: string = args.searchQuery ?? args.query ?? "";
+        const searchDir = this.resolvePath(args.relativePath ?? args.path ?? ".");
+        const maxResults = args.maxResults ?? args.limit ?? 50;
+
+        const fileResults: Array<{ file: string; matchType: "name" | "content"; line?: number; snippet?: string }> = [];
+
+        this.walkFiles(searchDir, "", (fp) => {
+          if (fileResults.length >= maxResults) return false;
+          const relPath = relative(this.cwd, fp);
+          const fileName = basename(fp);
+
+          // Match by filename pattern
+          const nameMatch = namePatterns.length === 0
+          || namePatterns.some(p => fileName.toLowerCase().includes(p.toLowerCase()) || relPath.toLowerCase().includes(p.toLowerCase()));
+
+          if (nameMatch) {
+            if (textQuery) {
+              // Also search inside file content
+              try {
+                const content = readFileSync(fp, "utf-8");
+                const lines = content.split("\n");
+                for (let i = 0; i < lines.length && fileResults.length < maxResults; i++) {
+                  if (lines[i]?.toLowerCase().includes(textQuery.toLowerCase())) {
+                    fileResults.push({ file: relPath, matchType: "content", line: i + 1, snippet: lines[i]?.trim().slice(0, 120) });
+                  }
+                }
+              } catch { /* skip unreadable */ }
+            } else {
+              fileResults.push({ file: relPath, matchType: "name" });
+            }
+          }
+          return true;
+        });
+
+        return { status: "SUCCESS", results: fileResults, total: fileResults.length };
+      }
+
+      private writeFile(args: any): any {
+        const rawPath = args.path ?? args.filePath ?? args.relativePath ?? "";
+        const fp = this.resolvePath(rawPath);
+        const content = args.content ?? args.fileContent ?? "";
+        const dir = dirname(fp);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        writeFileSync(fp, content, "utf-8");
+        const filePath = rawPath || relative(this.cwd, fp) || basename(fp);
+        return {
+          status: "SUCCESS",
+          message: `Created file: ${filePath}`,
+          filePath,
+          contentLength: Buffer.byteLength(content, "utf-8"),
+          platform: "desktop",
+        };
+      }
+
+      private createDirectory(args: any): any {
+        const fp = this.resolvePath(args.relativePath ?? args.path ?? "");
+        mkdirSync(fp, { recursive: true });
+        return { status: "SUCCESS", path: fp };
+      }
+
+      private deleteFile(args: any): any {
+        const fp = this.resolvePath(args.relativePath ?? args.path ?? "");
+        if (existsSync(fp)) unlinkSync(fp);
+        const filePath = args.path ?? args.relativePath ?? basename(fp);
+        return { status: "SUCCESS", message: `Deleted file: ${filePath}`, platform: "desktop" };
+      }
+
+      // ─── Summary ───────────────────────────────────────────────────────────
+
+      static summarize(name: string, args: any, result: any): string {
+        if (result?.error) return `Error: ${String(result.error).slice(0, 60)}`;
+        const fileName = basename(args.path ?? args.filePath ?? args.relativePath ?? "") || "";
+        const cmd = args.command ?? args.cmd ?? "";
+        const summaries: Record<string, string> = {
+          bash:             `Bash: ${cmd.slice(0, 50)}`,
+          runCommand:       `Bash: ${cmd.slice(0, 50)}`,
+          createFile:       `Created ${fileName || "file"}`,
+          writeFile:        `Created ${fileName || "file"}`,
+          write:            `Created ${fileName || "file"}`,
+          readFile:         `Read ${fileName || "file"}`,
+          read:             `Read ${fileName || "file"}`,
+          edit:             `Edited ${fileName || "file"}`,
+          editFile:         `Edited ${fileName || "file"}`,
+          deleteFile:       `Deleted ${fileName || "file"}`,
+          createDirectory:  `Created directory ${fileName}`,
+          listDirectory:    `Listed ${fileName || "directory"}`,
+          searchFiles:      `Search: ${args.pattern ?? args.query ?? ""}`,
+          grep:             `Grep: ${args.pattern ?? ""}`,
+          glob:             `Glob: ${args.pattern ?? ""}`,
+          webSearch:        `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
+          web_search:       `WebSearch: ${(args.query ?? "").slice(0, 60)}`,
+          webFetch:         `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
+          web_fetch:        `WebFetch: ${(args.url ?? "").slice(0, 60)}`,
+        };
+        return summaries[name] ?? `${name} completed`;
+      }
   }
-}
